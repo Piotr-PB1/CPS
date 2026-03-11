@@ -25,7 +25,7 @@ PARAMS_NEEDED = [
     (True, True,  True, True, False, False), 
     (True, True,  True, True, False, False), 
     (True, True,  True, True, True, False), 
-    (True, True,  False, True, True, False),
+    (True, True,  True, True, True, False),
     (True, True,  True, True, True, False), 
     (True, False, True, True, False, True), 
     (True, False, True, False, False, False), 
@@ -118,13 +118,9 @@ def show_signal_chart(signal, idx):
     """Pokaż wykres czasowy sygnału"""
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
-    
-    # Utwórz wektor czasu
-    num_samples = len(signal.signal)
-    time = np.linspace(0, signal.d, num_samples)
-    
+
     plt.figure(figsize=(12, 6))
-    plt.plot(time, signal.signal, linewidth=1.5, color='blue')
+    plt.plot(signal.t, signal.signal, linewidth=1.5, color='blue')
     plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, d={signal.d}, fs={signal.sampling}Hz)", fontsize=12)
     plt.xlabel("Czas [s]")
     plt.ylabel("Amplituda")
@@ -163,6 +159,24 @@ def new_signal(variant, A=0, T=0, t1=0, d=0, kw=0, ts=0, sampling=1000):
         list_of_signals.append(signal)
     elif variant == 3:
         signal = sg.S3(A, T, t1, d, sampling)
+        list_of_signals.append(signal)
+    elif variant == 4:
+        signal = sg.S4(A, T, t1, d, sampling)
+        list_of_signals.append(signal)
+    elif variant == 5:
+        signal = sg.S5(A, T, t1, d, sampling)
+        list_of_signals.append(signal)
+    elif variant == 6:
+        signal = sg.S6(A, T, t1, d, kw, sampling)
+        list_of_signals.append(signal)
+    elif variant == 7:
+        signal = sg.S7(A, T, t1, d, kw, sampling)
+        list_of_signals.append(signal)
+    elif variant == 8:
+        signal = sg.S8(A, T, t1, d, kw, sampling)
+        list_of_signals.append(signal)
+    elif variant == 9:
+        signal = sg.S9(A, t1, d, ts, sampling)
         list_of_signals.append(signal)
     
     update_signals_display()
