@@ -1,6 +1,6 @@
 import tkinter as tk
 import Signal as sg
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, ttk
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -19,17 +19,18 @@ SYGNALY = [
 ]
 
 PARAMS_NEEDED = [
-    (True, False, True, True, False, False),
-    (True, False, True, True, False, False),
-    (True, True,  True, True, False, False), 
-    (True, True,  True, True, False, False), 
-    (True, True,  True, True, False, False), 
-    (True, True,  True, True, True, False), 
-    (True, True,  True, True, True, False),
-    (True, True,  True, True, True, False), 
-    (True, False, True, True, False, True), 
-    (True, False, True, False, False, False), 
-    (True, True,  True, True, False, False), 
+    # A, T, t1, d, kw, ts, ns, n1, p
+    (True, False, True, True, False, False, False, False, False),
+    (True, False, True, True, False, False, False, False, False),
+    (True, True,  True, True, False, False, False, False, False), 
+    (True, True,  True, True, False, False, False, False, False), 
+    (True, True,  True, True, False, False, False, False, False), 
+    (True, True,  True, True, True, False, False, False, False), 
+    (True, True,  True, True, True, False, False, False, False),
+    (True, True,  True, True, True, False, False, False, False), 
+    (True, False, True, True, False, True, False, False, False), 
+    (True, False, False, False, False, False, True, True, False), 
+    (True, False, True, True, False, False, False, False, True), 
 ]
 
 list_of_signals = []  # lista stworzonych sygnałów
@@ -39,7 +40,6 @@ def update_signals_display():
     """Odświeża wyświetlenie listy sygnałów"""
     global signal_frames
     
-    # Wyczyść stare ramki
     for frame in signal_frames:
         frame.destroy()
     signal_frames = []
@@ -50,7 +50,12 @@ def update_signals_display():
         frame.pack(fill=tk.X, padx=5, pady=5)
         
         signal_type = type(signal).__name__
-        label_text = f"{idx + 1}. {signal_type} - A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz"
+        if signal_type.startswith("S11"):
+            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz"
+        elif signal.discrete_signal:
+            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, n1={signal.n1}, ns={signal.ns}, fs={signal.sampling}Hz"
+        else:
+            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz"
         
         label = tk.Label(frame, text=label_text, bg="#f0f0f0", justify=tk.LEFT)
         label.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.X, expand=True)
@@ -79,6 +84,14 @@ def update_signals_display():
         btn_delete = tk.Button(frame, text="Usuń", width=8, bg="#ff6b6b", fg="white",
                               command=lambda i=idx: delete_signal(i))
         btn_delete.pack(side=tk.LEFT, padx=2, pady=5)
+
+        combo_1_list_signal_1_math['values'] = [
+            f"{idx+1}. {type(s).__name__}" for idx, s in enumerate(list_of_signals)
+        ]
+
+        combo_2_list_signal_2_math['values'] = [
+            f"{idx+1}. {type(s).__name__}" for idx, s in enumerate(list_of_signals)
+        ]
         
         signal_frames.append(frame)
     
@@ -86,11 +99,41 @@ def update_signals_display():
     signals_list_frame.update_idletasks()
     signals_list_canvas.config(scrollregion=signals_list_canvas.bbox("all"))
 
+def load_file():
+    """Wczytaj sygnał z pliku"""
+
+    filename = filedialog.askopenfilename(
+        title="Wybierz plik sygnału",
+        filetypes=[("Binary files", "*.bin"), ("Text files", "*.txt")]
+    )
+
+    if not filename:
+        return
+
+    try:
+        ext = filename.lower().split('.')[-1]
+
+        if ext == "bin":
+            signal = sg.Signal.load_from_bin(filename)
+
+        elif ext == "txt":
+            signal = sg.Signal.load_from_txt(filename)
+
+        else:
+            messagebox.showerror("Błąd", "Nieobsługiwany format pliku")
+            return
+
+        list_of_signals.append(signal)
+        update_signals_display()
+    except Exception as e:
+        messagebox.showerror("Błąd", f"Nie udało się wczytać pliku: {e}")
+
+
 def save_signal_bin(signal, idx):
     """Zapisz sygnał do pliku binarnego"""
     filename = filedialog.asksaveasfilename(
         defaultextension=".bin",
-        filetypes=[("Binary files", "*.bin"), ("All files", "*.*")],
+        filetypes=[("Binary files", "*.bin")],
         initialfile=f"signal_{idx+1}.bin"
     )
     if filename:
@@ -104,7 +147,7 @@ def save_signal_txt(signal, idx):
     """Zapisz sygnał do pliku tekstowego"""
     filename = filedialog.asksaveasfilename(
         defaultextension=".txt",
-        filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        filetypes=[("Text files", "*.txt")],
         initialfile=f"signal_{idx+1}.txt"
     )
     if filename:
@@ -119,9 +162,17 @@ def show_signal_chart(signal, idx):
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
 
+
     plt.figure(figsize=(12, 6))
-    plt.plot(signal.t, signal.signal, linewidth=1.5, color='blue')
-    plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, d={signal.d}, fs={signal.sampling}Hz)", fontsize=12)
+    if signal.discrete_signal:
+        plt.stem(signal.t, signal.signal, markerfmt='bo', basefmt=" ")
+        if isinstance(signal, sg.S11):
+            plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz)", fontsize=12)
+        else:
+            plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, n1={signal.n1}, ns={signal.ns}, fs={signal.sampling}Hz)", fontsize=12)
+    else:
+        plt.plot(signal.t, signal.signal, linewidth=1.5, color='blue')
+        plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, d={signal.d}, fs={signal.sampling}Hz)", fontsize=12)
     plt.xlabel("Czas [s]")
     plt.ylabel("Amplituda")
     plt.grid(True, alpha=0.3)
@@ -135,8 +186,9 @@ def show_signal_histogram(signal, idx):
         signal.generate_signal()
     
     plt.figure(figsize=(12, 6))
-    plt.hist(signal.signal, bins=50, edgecolor='black', alpha=0.7, color='green')
-    plt.title(f"Sygnał #{idx+1} - Histogram (A={signal.A}, d={signal.d}, fs={signal.sampling}Hz)", fontsize=12)
+    plt.hist(signal.signal, bins=int(combo.get()), edgecolor='black', alpha=0.7, color='green')
+
+    plt.title(signal.__str__(), fontsize=12)
     plt.xlabel("Wartość")
     plt.ylabel("Liczba próbek")
     plt.grid(True, alpha=0.3, axis='y')
@@ -149,8 +201,8 @@ def delete_signal(idx):
         list_of_signals.pop(idx)
         update_signals_display()
 
-def new_signal(variant, A=0, T=0, t1=0, d=0, kw=0, ts=0, sampling=1000):
-    print(f"new_signal({variant}, A={A}, T={T}, t1={t1}, d={d}, kw={kw}, ts={ts}, sampling={sampling})")
+def new_signal(variant, A=0, T=0, t1=0, d=0, kw=0, ts=0, ns=0, n1=-1, p=0.5, sampling=1000):
+    print(f"new_signal({variant}, A={A}, T={T}, t1={t1}, d={d}, kw={kw}, ts={ts}, ns={ns}, n1={n1}, p={p} sampling={sampling})")
     if variant == 1:
         signal = sg.S1(A, t1, d, sampling)
         list_of_signals.append(signal)
@@ -178,6 +230,12 @@ def new_signal(variant, A=0, T=0, t1=0, d=0, kw=0, ts=0, sampling=1000):
     elif variant == 9:
         signal = sg.S9(A, t1, d, ts, sampling)
         list_of_signals.append(signal)
+    elif variant == 10:
+        signal = sg.S10(A, n1, ns, sampling)
+        list_of_signals.append(signal)
+    elif variant == 11:
+        signal = sg.S11(A, t1, d, p, sampling)
+        list_of_signals.append(signal)
     
     update_signals_display()
 
@@ -186,7 +244,7 @@ def enter():
         messagebox.showerror("Błąd", "Wybierz typ sygnału")
         return
 
-    index = lb.curselection()[0]  # 0..10
+    index = lb.curselection()[0]
     variant = index + 1
 
     try:
@@ -196,20 +254,23 @@ def enter():
         d = float(entry_d.get() if entry_d.get() else 0)
         kw = float(entry_kw.get() if entry_kw.get() else 0)
         ts = float(entry_ts.get() if entry_ts.get() else 0)
+        ns = float(entry_ns.get() if entry_ns.get() else 0)
+        n1 = float(entry_n1.get() if entry_n1.get() else 1)
+        p = float(entry_p.get() if entry_p.get() else 0.5)
         sampling = int(entry_sampling.get() if entry_sampling.get() else 1000)
     except ValueError:
         messagebox.showerror("Błąd", "Wprowadź poprawne liczby w polach")
         return
 
-    new_signal(variant, A, T, t1, d, kw, ts, sampling)
+    new_signal(variant, A, T, t1, d, kw, ts, ns, n1, p, sampling)
 
-    info_label.config(text=f"Zatwierdzono: {SYGNALY[index]}, A={A}, T={T}, t1={t1}, d={d}, kw={kw}, ts={ts}, sampling={sampling}")
+    info_label.config(text=f"Zatwierdzono: {SYGNALY[index]}, A={A}, T={T}, t1={t1}, d={d}, kw={kw}, ts={ts}, n1={n1}, ns={ns}, p={p} sampling={sampling}")
 
 def update_fields(event=None):
     if not lb.curselection():
         return
     index = lb.curselection()[0]
-    need_A, need_T, need_t1, need_d, need_kw, need_ts = PARAMS_NEEDED[index]
+    _, need_T, need_t1, need_d, need_kw, need_ts, need_ns, need_n1, need_p = PARAMS_NEEDED[index]
 
     if need_T:
         entry_T.config(state='normal')
@@ -241,15 +302,31 @@ def update_fields(event=None):
         entry_ts.config(state='disabled')
         entry_ts.delete(0, tk.END)
 
+    if need_ns:
+        entry_ns.config(state='normal')
+    else:
+        entry_ns.config(state='disabled')
+        entry_ns.delete(0, tk.END)
+
+    if need_n1:
+        entry_n1.config(state='normal')
+    else:
+        entry_n1.config(state='disabled')
+        entry_n1.delete(0, tk.END)
+
+    if need_p:
+        entry_p.config(state='normal')
+    else:
+        entry_p.config(state='disabled')
+        entry_p.delete(0, tk.END)
+
 root = tk.Tk()
 root.title("Signal manipulator")
-root.geometry("1000x700")
+root.geometry("1200x700")
 
-# Panel z listą sygnałów (na górze)
 label_signals = tk.Label(root, text="Stworzone sygnały:", font=("Arial", 10, "bold"))
 label_signals.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
 
-# Canvas z scrollbarem dla listy sygnałów
 signals_list_canvas = tk.Canvas(root, height=200, width=800, bg="white")
 scrollbar = tk.Scrollbar(root, orient=tk.VERTICAL, command=signals_list_canvas.yview)
 signals_list_frame = tk.Frame(signals_list_canvas, bg="white")
@@ -315,19 +392,106 @@ entry_ts = tk.Entry(frame_params, width=15)
 entry_ts.grid(row=5, column=1, padx=5, pady=5)
 entry_ts.insert(0, "0")
 
+# nr próbki n1
+label_n1 = tk.Label(frame_params, text="Nr próbki n1:")
+label_n1.grid(row=6, column=0, padx=5, pady=5, sticky="e")
+entry_n1 = tk.Entry(frame_params, width=15)
+entry_n1.grid(row=6, column=1, padx=5, pady=5)
+entry_n1.insert(0, "-1")
+
+# nr próki dla której następuje skok 
+
+label_ns = tk.Label(frame_params, text="Nr próbki skoku ns:")
+label_ns.grid(row=7, column=0, padx=5, pady=5, sticky="e")
+entry_ns = tk.Entry(frame_params, width=15)
+entry_ns.grid(row=7, column=1, padx=5, pady=5)
+entry_ns.insert(0, "0")
+
+# prawdopodobieństwo p dla szumu impulsowego
+label_p = tk.Label(frame_params, text="Prawdopodobieństwo p:")
+label_p.grid(row=8, column=0, padx=5, pady=5, sticky="e")
+entry_p = tk.Entry(frame_params, width=15)
+entry_p.grid(row=8, column=1, padx=5, pady=5)
+entry_p.insert(0, "0")
+
 # Próbkowanie
 label_sampling = tk.Label(frame_params, text="Próbkowanie [Hz]:")
-label_sampling.grid(row=6, column=0, padx=5, pady=5, sticky="e")
+label_sampling.grid(row=9, column=0, padx=5, pady=5, sticky="e")
 entry_sampling = tk.Entry(frame_params, width=15)
-entry_sampling.grid(row=6, column=1, padx=5, pady=5)
+entry_sampling.grid(row=9, column=1, padx=5, pady=5)
 entry_sampling.insert(0, "1000")
 
 # Przycisk zatwierdź
-button = tk.Button(frame_params, text="Zatwierdź sygnał", command=enter)
-button.grid(row=7, column=0, columnspan=2, pady=15)
+button_enter = tk.Button(frame_params, text="Zatwierdź sygnał", command=enter)
+button_enter.grid(row=10, column=0, columnspan=2, pady=15)
+
+#przyciks wczytaj z pliku
+button_upload = tk.Button(frame_params, text="Wczytaj z pliku", command=load_file)
+button_upload.grid(row=11, column=0, columnspan=2, pady=5)
+
+label_combo = tk.Label(frame_params, text="Wybierz ilość przedziałow w hisotgramie:")
+label_combo.grid(row=0, column=2, padx=5, pady=5, sticky="e")
 
 info_label = tk.Label(root, text="", fg="blue")
 info_label.grid(row=3, column=0, columnspan=2, pady=10)
+
+combo = ttk.Combobox(frame_params, values=[5, 10, 15, 20])
+combo.grid(row=1, column=2, columnspan=2, pady=5)
+combo.current(1)
+
+combo_1_label = tk.Label(frame_params, text="Sygnał 1 do operacji matematycznych:")
+combo_1_label.grid(row=3, column=2, padx=5, pady=5, sticky="e")
+combo_1_list_signal_1_math = ttk.Combobox(frame_params, values=[f"{idx+1}. {type(s).__name__}" for idx, s in enumerate(list_of_signals)], state="readonly")
+combo_1_list_signal_1_math.grid(row=4, column=2, columnspan=2, pady=5)
+
+combo_2_label = tk.Label(frame_params, text="Sygnał 2 do operacji matematycznych:")
+combo_2_label.grid(row=5, column=2, padx=5, pady=5)
+combo_2_list_signal_2_math = ttk.Combobox(frame_params, values=[f"{idx+1}. {type(s).__name__}" for idx, s in enumerate(list_of_signals)], state="readonly")
+combo_2_list_signal_2_math.grid(row=6, column=2, columnspan=2, pady=5)
+
+combo_3_label = tk.Label(frame_params, text="Wybierz operację matematyczną:")
+combo_3_label.grid(row=7, column=2, padx=5, pady=5)
+combo_3_list_operation = ttk.Combobox(frame_params, values=["dodawanie", "odejmowanie", "mnożenie", "dzielenie"], state="readonly")
+combo_3_list_operation.grid(row=8, column=2, columnspan=2, pady=5)
+combo_3_list_operation.current(0)
+
+def chosen_signal_to_do_math(event=None):
+    index1 = combo_1_list_signal_1_math.current()
+    index2 = combo_2_list_signal_2_math.current()
+    return list_of_signals[index1], list_of_signals[index2]
+
+combo_1_list_signal_1_math.bind("<<ComboboxSelected>>", chosen_signal_to_do_math)
+combo_2_list_signal_2_math.bind("<<ComboboxSelected>>", chosen_signal_to_do_math)
+
+do_math_button = tk.Button(frame_params, text="Wykonaj operację", command=lambda: operate_signals(chosen_signal_to_do_math(), combo_3_list_operation.get()))
+do_math_button.grid(row=9, column=2, columnspan=2, pady=10)
+
+def operate_signals(signals, op):
+    if signals[0] is None or signals[1] is None:
+        messagebox.showerror("Błąd", "Potrzebne są co najmniej dwa sygnały")
+        return
+    s1 = signals[0]
+    s2 = signals[1]
+
+    # dopasuj długość
+    n = min(len(s1.signal), len(s2.signal))
+    data1 = np.array(s1.signal[:n])
+    data2 = np.array(s2.signal[:n])
+    if op == 'dodawanie':
+        result_data = data1 + data2
+    elif op == 'odejmowanie':
+        result_data = data1 - data2
+    elif op == 'mnożenie':
+        result_data = data1 * data2
+    else:
+        result_data = np.divide(data1, data2, out=np.zeros_like(data1), where=data2!=0)
+    t = s1.t[:n] if hasattr(s1, 't') else None
+    new_sig = sg.Signal.from_array(t if t is not None else np.arange(n), result_data,
+                                   t1=getattr(s1, 't1', 0), sampling=getattr(s1, 'sampling', 1))
+    new_sig.t = t
+    list_of_signals.append(new_sig)
+    update_signals_display()
+
 
 lb.bind('<<ListboxSelect>>', update_fields)
 

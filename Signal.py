@@ -1,212 +1,402 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import struct
 import os
 
+MAGIC = b"SIGF"
+VERSION = 1
+
 class Signal:
-    def __init__(self, A, t1, d, T=0, kw=0, ts=0):
+    def __init__(self, A=0, t1=0.0, d=0.0, T=0.0, kw=0.0, ts=0.0, ns=0, n1=0, p=0.0, sampling=1000):
         self.A = A
-        self.t1 = t1
-        self.d = d
-        self.T = T
-        self.kw = kw
-        self.ts = ts
-        self.signal = None
-    
+        self.t1 = float(t1)
+        self.d = float(d)
+        self.T = float(T)
+        self.kw = float(kw)
+        self.ts = float(ts)
+        self.ns = int(ns)
+        self.n1 = int(n1)
+        self.p = float(p)
+        self.sampling = float(sampling)
+        self.signal = None    
+        self.t = None         
+        self.discrete_signal = False
+
+    def __str__(self):
+        return f"{type(self).__name__}(A={self.A}, T={self.T}, t1={self.t1}, d={self.d}, kw={self.kw}, ts={self.ts}, ns={self.ns}, n1={self.n1}, p={self.p}, sampling={self.sampling})"
+
     def generate_signal(self):
-        pass
+        raise NotImplementedError()
+
+    @classmethod
+    def from_array(cls, t_values, signal_values, t1=0.0, sampling=1):
+        obj = cls(0, t1, (t_values[-1] - t_values[0]) if len(t_values) > 1 else 0.0)
+        obj.t = np.array(t_values)
+        obj.signal = np.array(signal_values)
+        obj.sampling = sampling
+        obj.discrete_signal = True
+        return obj
+
+    def _ensure_signal(self):
+        if self.signal is None:
+            try:
+                self.generate_signal()
+            except Exception:
+                pass
+
+    def save_to_bin(self, filename):
+
+        self._ensure_signal()
+        if self.signal is None:
+            raise ValueError("Brak próbek")
+
+        data = np.asarray(self.signal, dtype=np.float64)
+        n = data.size
+
+        is_complex = np.iscomplexobj(data)
+        is_discrete = self.discrete_signal
+
+        type_id = int(type(self).__name__[1:]) if type(self).__name__.startswith("S") else 0
+
+        flags = (1 if is_complex else 0) | (2 if is_discrete else 0)
+
+        with open(filename, "wb") as f:
+
+            f.write(MAGIC)
+            f.write(struct.pack("B", VERSION))
+            f.write(struct.pack("B", flags))
+
+            f.write(struct.pack("B", type_id))
+
+            f.write(struct.pack("d", self.A))
+            f.write(struct.pack("d", self.T))
+            f.write(struct.pack("d", self.t1))
+            f.write(struct.pack("d", self.d))
+            f.write(struct.pack("d", self.kw))
+            f.write(struct.pack("d", self.ts))
+            f.write(struct.pack("i", self.ns))
+            f.write(struct.pack("i", self.n1))
+            f.write(struct.pack("d", self.p))
+            f.write(struct.pack("d", self.sampling))
+            f.write(struct.pack("?", self.discrete_signal))
+
+            f.write(struct.pack("I", n))
+
+            if is_complex:
+                # zapisz n jako liczba próbek complex
+                real_imag = np.empty(data.size * 2, dtype=np.float64)
+                real_imag[0::2] = data.real.ravel()
+                real_imag[1::2] = data.imag.ravel()
+                f.write(real_imag.tobytes())
+            else:
+                f.write(data.tobytes())
+
+    def save_to_txt(self, filename):
+
+        self._ensure_signal()
+
+        with open(filename,"w") as f:
+
+            f.write(f"{type(self).__name__}\n")
+
+            f.write(f"A {self.A}\n")
+            f.write(f"T {self.T}\n")
+            f.write(f"t1 {self.t1}\n")
+            f.write(f"d {self.d}\n")
+            f.write(f"kw {self.kw}\n")
+            f.write(f"ts {self.ts}\n")
+            f.write(f"ns {self.ns}\n")
+            f.write(f"n1 {self.n1}\n")
+            f.write(f"p {self.p}\n")
+            f.write(f"sampling {self.sampling}\n")
+            f.write(f"Discrete {int(self.discrete_signal)}\n")
+
+            f.write(f"N {len(self.signal)}\n\n")
+
+            for t,v in zip(self.t,self.signal):
+                f.write(f"{t} {v}\n")
+
+    @classmethod
+    def load_from_bin(cls, filename):
+
+        with open(filename, "rb") as f:
+
+            if f.read(4) != MAGIC:
+                raise ValueError("Zły format")
+
+            version = struct.unpack("B", f.read(1))[0]
+            flags = struct.unpack("B", f.read(1))[0]
+
+            is_complex = bool(flags & 1)
+
+            type_id = struct.unpack("B", f.read(1))[0]
+
+            A = struct.unpack("d", f.read(8))[0]
+            T = struct.unpack("d", f.read(8))[0]
+            t1 = struct.unpack("d", f.read(8))[0]
+            d = struct.unpack("d", f.read(8))[0]
+            kw = struct.unpack("d", f.read(8))[0]
+            ts = struct.unpack("d", f.read(8))[0]
+            ns = struct.unpack("i", f.read(4))[0]
+            n1 = struct.unpack("i", f.read(4))[0]
+            p = struct.unpack("d", f.read(8))[0]
+            sampling = struct.unpack("d", f.read(8))[0]
+            discrete_signal = struct.unpack("?", f.read(1))[0]
+
+            n = struct.unpack("I", f.read(4))[0]
+
+            if is_complex:
+                raw = np.frombuffer(f.read(n * 16), dtype=np.float64)
+                real = raw[0::2]
+                imag = raw[1::2]
+                data = real + 1j * imag
+            else:
+                data = np.frombuffer(f.read(n * 8), dtype=np.float64)
+
+        module = __import__(__name__)
+        class_name = f"S{type_id}"
+        klass = getattr(module, class_name, cls)
+
+        obj = object.__new__(klass)
+
+        obj.A = A
+        obj.T = T
+        obj.t1 = t1
+        obj.d = d
+        obj.kw = kw
+        obj.ts = ts
+        obj.ns = ns
+        obj.n1 = n1
+        obj.p = p
+        obj.sampling = sampling
+        obj.discrete_signal = discrete_signal
+
+        obj.signal = data
+        obj.t = t1 + np.arange(len(data)) / sampling
+
+        return obj
+
+    @classmethod
+    def load_from_txt(cls, filename):
+        with open(filename) as f:
+            type_name = f.readline().strip()
+            params = {}
+            while True:
+                line = f.readline().strip()
+                if line.startswith("N"):
+                    n = int(line.split()[1])
+                    break
+                k, v = line.split()
+                params[k] = float(v)
+            t = []
+            data = []
+
+            for line in f:
+                if line.strip() == "":
+                    continue
+
+                tv, v = line.split()
+                t.append(float(tv))
+                data.append(float(v))
+
+        module = __import__(__name__)
+        klass = getattr(module, type_name, cls)
+
+        obj = object.__new__(klass)
+
+        obj.A = params.get("A",0)
+        obj.T = params.get("T",0)
+        obj.t1 = params.get("t1",0)
+        obj.d = params.get("d",0)
+        obj.kw = params.get("kw",0)
+        obj.ts = params.get("ts",0)
+        obj.ns = int(params.get("ns",0))
+        obj.n1 = int(params.get("n1",0))
+        obj.p = params.get("p",0)
+        obj.sampling = params.get("sampling",1)
+
+        obj.t = np.array(t)
+        obj.signal = np.array(data)
+
+        obj.discrete_signal = bool(params.get("Discrete",0))
+
+        return obj
 
     def avg_value(self):
+        self._ensure_signal()
         if self.signal is None:
-            self.generate_signal()
-        return 1/self.d * np.trapezoid(self.signal, dx=self.ts if self.ts else 1/1000)
-    
+            return 0.0
+        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
+        if duration == 0:
+            return np.mean(self.signal)
+        return (1.0 / duration) * np.trapz(self.signal, x=self.t if self.t is not None else None)
+
     def avg_abs_value(self):
+        self._ensure_signal()
         if self.signal is None:
-            self.generate_signal()
-        return 1/self.d * np.trapezoid(np.abs(self.signal), dx=self.ts if self.ts else 1/1000)
-    
+            return 0.0
+        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
+        if duration == 0:
+            return np.mean(np.abs(self.signal))
+        return (1.0 / duration) * np.trapz(np.abs(self.signal), x=self.t if self.t is not None else None)
+
     def variance(self):
+        self._ensure_signal()
         if self.signal is None:
-            self.generate_signal()
-        return 1/self.d * np.trapezoid((self.signal - self.avg_value())**2, dx=self.ts if self.ts else 1/1000)
-    
+            return 0.0
+        m = self.avg_value()
+        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
+        if duration == 0:
+            return np.mean((self.signal - m) ** 2)
+        return (1.0 / duration) * np.trapz((self.signal - m) ** 2, x=self.t if self.t is not None else None)
+
     def power(self):
+        self._ensure_signal()
         if self.signal is None:
-            self.generate_signal()
-        return np.mean(self.signal**2)
-    
+            return 0.0
+        return np.mean(np.abs(self.signal) ** 2)
+
     def rms_value(self):
+        self._ensure_signal()
         if self.signal is None:
-            self.generate_signal()
-        return np.sqrt(1/self.d * np.trapezoid(self.signal**2, dx=self.ts if self.ts else 1/1000))
+            return 0.0
+        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
+        if duration == 0:
+            return np.sqrt(np.mean(np.abs(self.signal) ** 2))
+        return np.sqrt((1.0 / duration) * np.trapz(np.abs(self.signal) ** 2, x=self.t if self.t is not None else None))
 
 
-    # parametry
+# ---------------- konkretne sygnały ----------------
 
-    # metody
-        # zapis, odczyt - to chyba też można zrobić w ogólnej funkcji wykorzystującej obiekt, histogram, wykres, 
-        # obliczenie parametrów, wyliczenie sygnału?
-        # wykersy można zroić w osobnej metodzie, gdzie parametrem będzie obiekt 
-        # SPRWADZIĆ WYKŁĄDY - mogą tam być gotowe przykłady 
-
-
-class S1(Signal):
+class S1(Signal):  # szum jednostajny
     def __init__(self, A, t1, d, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, sampling=sampling)
         self.discrete_signal = False
-    
+
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        self.signal = np.random.uniform(-self.A, self.A, self.t.shape)
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        self.signal = np.random.uniform(-self.A, self.A, size=n)
         return self.signal
 
-class S2(Signal):
+class S2(Signal):  # szum gaussowski
     def __init__(self, A, t1, d, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, sampling=sampling)
         self.discrete_signal = False
-    
+
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        self.signal = np.random.normal(0, self.A, self.t.shape)
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        self.signal = np.random.normal(0.0, self.A, size=n)
         return self.signal
 
-class S3(Signal):
+class S3(Signal):  # sinusoidalny
     def __init__(self, A, T, t1, d, sampling=1000):
-        self.A = A
-        self.T = T
-        self.t1 = t1
-        self.d = d
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, T=T, sampling=sampling)
         self.discrete_signal = False
-    
+
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        self.signal = self.A * np.sin((2*np.pi/self.T)*self.t)
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        omega = 2.0 * np.pi / self.T if self.T != 0 else 0.0
+        self.signal = self.A * np.sin(omega * (self.t - self.t1))
         return self.signal
 
-class S4(Signal):
+class S4(Signal):  # sinus jednopołówkowo wyprostowany
     def __init__(self, A, T, t1, d, sampling=1000):
-        self.A = A
-        self.T = T
-        self.t1 = t1
-        self.d = d
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, T=T, sampling=sampling)
         self.discrete_signal = False
-    
+
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        self.signal = 0.5*self.A*(np.sin((2*np.pi/self.T)*self.t) + np.abs(np.sin((2*np.pi/self.T)*self.t)))
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        omega = 2.0 * np.pi / self.T if self.T != 0 else 0.0
+        s = np.sin(omega * (self.t - self.t1))
+        self.signal = 0.5 * self.A * (s + np.abs(s))
         return self.signal
 
-class S5(Signal):
+class S5(Signal):  # abs(sin)
     def __init__(self, A, T, t1, d, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.T = T
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, T=T, sampling=sampling)
         self.discrete_signal = False
 
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        self.signal = self.A * np.abs(np.sin((2*np.pi/self.T)*self.t))
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        omega = 2.0 * np.pi / self.T if self.T != 0 else 0.0
+        self.signal = self.A * np.abs(np.sin(omega * (self.t - self.t1)))
         return self.signal
-    
-class S6(Signal):
+
+class S6(Signal):  # sygnał prostokątny (nie-symetryczny)
     def __init__(self, A, T, t1, d, kw, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.T = T
-        self.kw = kw
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, T=T, kw=kw, sampling=sampling)
         self.discrete_signal = False
 
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        self.signal = np.where((self.t % self.T) < (self.kw * self.T), self.A, 0)
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        tau = (self.t - self.t1) % self.T
+        self.signal = np.where(tau < (self.kw * self.T), self.A, 0.0)
         return self.signal
-    
-class S7(Signal):
+
+class S7(Signal):  # prostokątny symetryczny
     def __init__(self, A, T, t1, d, kw, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.T = T
-        self.kw = kw
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, T=T, kw=kw, sampling=sampling)
         self.discrete_signal = False
 
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        self.signal = np.where((self.t % self.T) < (self.kw * self.T), -self.A, self.A)
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        self.signal = np.where(((self.t - self.t1) % self.T) < (self.kw * self.T), -self.A, self.A)
         return self.signal
-    
-class S8(Signal):
+
+class S8(Signal):  # trójkątny
     def __init__(self, A, T, t1, d, kw, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.T = T
-        self.kw = kw
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, T=T, kw=kw, sampling=sampling)
         self.discrete_signal = False
 
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        # calculate time within each period
-        tau = self.t % self.T
-        # rising slope up to kw*T, then falling slope
-        self.signal = np.where(
-            tau < (self.kw * self.T),
-            (self.A / (self.kw * self.T)) * tau,
-            (-self.A / ((1 - self.kw) * self.T)) * (tau - self.kw * self.T) + self.A
-        )
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        tau = (self.t - self.t1) % self.T
+        a = self.kw * self.T
+        with np.errstate(divide='ignore', invalid='ignore'):
+            up = (self.A / a) * tau
+            down = (-self.A / (self.T - a)) * (tau - a) + self.A
+            self.signal = np.where(tau < a, up, down)
         return self.signal
-    
-class S9(Signal):
+
+class S9(Signal):  # skok jednostkowy w czasie ts
     def __init__(self, A, t1, d, ts, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.ts = ts
-        self.sampling = sampling
-        self.signal = None
+        super().__init__(A, t1, d, ts=ts, sampling=sampling)
         self.discrete_signal = False
 
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        # create a signal that is A for ts seconds and 0 otherwise, repeating every ts seconds
-        self.signal = np.where(self.t < self.ts , 0, self.A)
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = np.linspace(self.t1, self.t1 + self.d, n, endpoint=False)
+        self.signal = np.where(self.t < self.ts, 0.0, self.A)
+        return self.signal
+
+class S10(Signal):  # impuls jednostkowy (dyskretny)
+    def __init__(self, A, n1, ns, sampling=1): 
+        super().__init__(A, t1=0.0, d=0.0, sampling=sampling) 
+        self.n1 = int(n1) 
+        self.ns = int(ns) 
+        self.discrete_signal = True 
+        
+    def generate_signal(self): 
+        length = abs(self.ns - self.n1) + 10 
+        self.t = np.arange(self.n1, self.n1 + length) 
+        self.signal = np.where(self.t == self.ns, self.A, 0.0) 
         return self.signal
     
-class S10(Signal):
-    def __init__(self, A, t1, d, ts, sampling=1000):
-        self.A = A
-        self.t1 = t1
-        self.d = d
-        self.ts = ts
-        self.sampling = sampling
-        self.signal = None
+class S11(Signal):  # szum impulsowy (dyskretny) - losowy impuls z prawdopodobieństwem p
+    def __init__(self, A, t1, d, p, sampling=1000):
+        super().__init__(A, t1, d, p=p, sampling=sampling)
         self.discrete_signal = True
 
     def generate_signal(self):
-        self.t = np.linspace(self.t1, self.d+self.t1, int(self.d*self.sampling))
-        # create a signal that is A for ts seconds and 0 otherwise, repeating every ts seconds
-        self.signal = np.where(self.t < self.ts , 0, -self.A)
+        n = max(1, int(round(self.d * self.sampling)))
+        self.t = self.t1 + np.arange(n) / self.sampling
+        rnd = np.random.random(n)
+        self.signal = np.where(rnd < self.p, self.A, 0.0)
         return self.signal
