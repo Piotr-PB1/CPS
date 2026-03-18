@@ -79,6 +79,11 @@ def update_signals_display():
         btn_hist = tk.Button(frame, text="Histogram", width=10,
                             command=lambda s=signal, i=idx: show_signal_histogram(s, i))
         btn_hist.pack(side=tk.LEFT, padx=2, pady=5)
+                
+        #prametry sygnału
+        btn_params = tk.Button(frame, text="Parametry", width=10, 
+                               command=lambda s=signal: signal_params_to_labels(s))
+        btn_params.pack(side=tk.LEFT, padx=2, pady=5)
         
         # Przycisk usuń
         btn_delete = tk.Button(frame, text="Usuń", width=8, bg="#ff6b6b", fg="white",
@@ -161,21 +166,16 @@ def show_signal_chart(signal, idx):
     """Pokaż wykres czasowy sygnału"""
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
-
-
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(10, 5))
+    plt.style.use('seaborn-v0_8-whitegrid')
     if signal.discrete_signal:
-        plt.stem(signal.t, signal.signal, markerfmt='bo', basefmt=" ")
-        if isinstance(signal, sg.S11):
-            plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz)", fontsize=12)
-        else:
-            plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, n1={signal.n1}, ns={signal.ns}, fs={signal.sampling}Hz)", fontsize=12)
+        plt.stem(signal.t, signal.signal, basefmt=" ", markerfmt='o', linefmt='C0-')
     else:
-        plt.plot(signal.t, signal.signal, linewidth=1.5, color='blue')
-        plt.title(f"Sygnał #{idx+1} - Wykres czasowy (A={signal.A}, d={signal.d}, fs={signal.sampling}Hz)", fontsize=12)
-    plt.xlabel("Czas [s]")
+        plt.plot(signal.t, signal.signal, color='C0', linewidth=1.8, label="Sygnał")
+    plt.title(f"Sygnał #{idx+1} ({type(signal).__name__})", fontsize=13, weight='bold')
+    plt.xlabel("Czas [s]" if not signal.discrete_signal else "Numer próbki")
     plt.ylabel("Amplituda")
-    plt.grid(True, alpha=0.3)
+    plt.legend()
     plt.tight_layout()
     plt.show()
 
@@ -486,12 +486,34 @@ def operate_signals(signals, op):
     else:
         result_data = np.divide(data1, data2, out=np.zeros_like(data1), where=data2!=0)
     t = s1.t[:n] if hasattr(s1, 't') else None
-    new_sig = sg.Signal.from_array(t if t is not None else np.arange(n), result_data,
-                                   t1=getattr(s1, 't1', 0), sampling=getattr(s1, 'sampling', 1))
+    discrete = s1.discrete_signal or s2.discrete_signal
+    new_sig = sg.Signal.from_array(
+        t if t is not None else np.arange(n),
+        result_data,
+        t1=getattr(s1, 't1', 0),
+        sampling=getattr(s1, 'sampling', 1)
+    )
     new_sig.t = t
+    new_sig.discrete_signal = discrete
     list_of_signals.append(new_sig)
     update_signals_display()
 
+def signal_params_to_labels(signal):
+
+    avereage_value_label = tk.Label(frame_params, text=f"Średnia wartość sygnału: {signal.mean_value():.2f}")
+    avereage_value_label.grid(row=0, column=5, padx=5, pady=5)
+
+    average_abs_value_label = tk.Label(frame_params, text=f"Średnia wartość bezwzględna sygnału: {signal.mean_abs_value():.2f}")
+    average_abs_value_label.grid(row=1, column=5, padx=5, pady=5)
+
+    variance_label = tk.Label(frame_params, text=f"Wariancja sygnału: {signal.variance():.2f}")
+    variance_label.grid(row=2, column=5, padx=5, pady=5)
+
+    RMS_value_label = tk.Label(frame_params, text=f"Wartość skuteczna (RMS) sygnału: {signal.rms_value():.2f}")
+    RMS_value_label.grid(row=3, column=5, padx=5, pady=5)
+
+    power_label = tk.Label(frame_params, text=f"Moc sygnału: {signal.power():.2f}")
+    power_label.grid(row=4, column=5, padx=5, pady=5)
 
 lb.bind('<<ListboxSelect>>', update_fields)
 

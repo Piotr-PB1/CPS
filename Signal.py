@@ -221,49 +221,30 @@ class Signal:
 
         return obj
 
-    def avg_value(self):
-        self._ensure_signal()
+    def mean_value(self):
         if self.signal is None:
-            return 0.0
-        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
-        if duration == 0:
-            return np.mean(self.signal)
-        return (1.0 / duration) * np.trapz(self.signal, x=self.t if self.t is not None else None)
-
-    def avg_abs_value(self):
-        self._ensure_signal()
+            self.generate_signal()
+        return np.mean(self.signal)
+    
+    def mean_abs_value(self):
         if self.signal is None:
-            return 0.0
-        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
-        if duration == 0:
-            return np.mean(np.abs(self.signal))
-        return (1.0 / duration) * np.trapz(np.abs(self.signal), x=self.t if self.t is not None else None)
+            self.generate_signal()
+        return np.mean(np.abs(self.signal))
 
     def variance(self):
-        self._ensure_signal()
         if self.signal is None:
-            return 0.0
-        m = self.avg_value()
-        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
-        if duration == 0:
-            return np.mean((self.signal - m) ** 2)
-        return (1.0 / duration) * np.trapz((self.signal - m) ** 2, x=self.t if self.t is not None else None)
-
+            self.generate_signal()
+        return np.mean((self.signal - np.mean(self.signal)) ** 2)
+    
     def power(self):
-        self._ensure_signal()
         if self.signal is None:
-            return 0.0
+            self.generate_signal()
         return np.mean(np.abs(self.signal) ** 2)
-
+    
     def rms_value(self):
-        self._ensure_signal()
         if self.signal is None:
-            return 0.0
-        duration = self.d if self.d != 0 else (self.signal.size / self.sampling if self.sampling else 1.0)
-        if duration == 0:
-            return np.sqrt(np.mean(np.abs(self.signal) ** 2))
-        return np.sqrt((1.0 / duration) * np.trapz(np.abs(self.signal) ** 2, x=self.t if self.t is not None else None))
-
+            self.generate_signal()
+        return np.sqrt(self.power())
 
 # ---------------- konkretne sygnały ----------------
 
@@ -376,7 +357,7 @@ class S9(Signal):  # skok jednostkowy w czasie ts
         self.signal = np.where(self.t < self.ts, 0.0, self.A)
         return self.signal
 
-class S10(Signal):  # impuls jednostkowy (dyskretny)
+class S10(Signal): # impuls jednostkowy (dyskretny) 
     def __init__(self, A, n1, ns, sampling=1): 
         super().__init__(A, t1=0.0, d=0.0, sampling=sampling) 
         self.n1 = int(n1) 
@@ -384,8 +365,7 @@ class S10(Signal):  # impuls jednostkowy (dyskretny)
         self.discrete_signal = True 
         
     def generate_signal(self): 
-        length = abs(self.ns - self.n1) + 10 
-        self.t = np.arange(self.n1, self.n1 + length) 
+        self.t = np.arange(-10+self.ns, 11 + self.ns)
         self.signal = np.where(self.t == self.ns, self.A, 0.0) 
         return self.signal
     
