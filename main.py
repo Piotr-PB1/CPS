@@ -37,7 +37,6 @@ list_of_signals = []  # lista stworzonych sygnałów
 signal_frames = []  # przechowywanie ramek sygnałów
 
 def update_signals_display():
-    """Odświeża wyświetlenie listy sygnałów"""
     global signal_frames
     
     for frame in signal_frames:
@@ -105,7 +104,6 @@ def update_signals_display():
     signals_list_canvas.config(scrollregion=signals_list_canvas.bbox("all"))
 
 def load_file():
-    """Wczytaj sygnał z pliku"""
 
     filename = filedialog.askopenfilename(
         title="Wybierz plik sygnału",
@@ -135,7 +133,6 @@ def load_file():
 
 
 def save_signal_bin(signal, idx):
-    """Zapisz sygnał do pliku binarnego"""
     filename = filedialog.asksaveasfilename(
         defaultextension=".bin",
         filetypes=[("Binary files", "*.bin")],
@@ -149,7 +146,6 @@ def save_signal_bin(signal, idx):
             messagebox.showerror("Błąd", f"Błąd przy zapisie: {str(e)}")
 
 def save_signal_txt(signal, idx):
-    """Zapisz sygnał do pliku tekstowego"""
     filename = filedialog.asksaveasfilename(
         defaultextension=".txt",
         filetypes=[("Text files", "*.txt")],
@@ -163,7 +159,6 @@ def save_signal_txt(signal, idx):
             messagebox.showerror("Błąd", f"Błąd przy zapisie: {str(e)}")
 
 def show_signal_chart(signal, idx):
-    """Pokaż wykres czasowy sygnału"""
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
     plt.figure(figsize=(10, 5))
@@ -179,8 +174,7 @@ def show_signal_chart(signal, idx):
     plt.tight_layout()
     plt.show()
 
-def show_signal_histogram(signal, idx):
-    """Pokaż histogram sygnału"""
+def show_signal_histogram(signal, _):
 
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
@@ -196,7 +190,6 @@ def show_signal_histogram(signal, idx):
     plt.show()
 
 def delete_signal(idx):
-    """Usuń sygnał z listy"""
     if 0 <= idx < len(list_of_signals):
         list_of_signals.pop(idx)
         update_signals_display()
@@ -342,7 +335,7 @@ signals_list_canvas.configure(yscrollcommand=scrollbar.set)
 signals_list_canvas.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
 scrollbar.grid(row=1, column=2, sticky="ns", pady=5)
 
-lb = tk.Listbox(root, width=40, height=10)
+lb = tk.Listbox(root, width=40, height=11)
 for i, s in enumerate(SYGNALY, start=1):
     lb.insert(i, s)
 lb.grid(row=2, column=0, padx=10, pady=10, sticky="n")
@@ -414,7 +407,7 @@ entry_p = tk.Entry(frame_params, width=15)
 entry_p.grid(row=8, column=1, padx=5, pady=5)
 entry_p.insert(0, "0")
 
-# Próbkowanie
+# próbkowanie
 label_sampling = tk.Label(frame_params, text="Próbkowanie [Hz]:")
 label_sampling.grid(row=9, column=0, padx=5, pady=5, sticky="e")
 entry_sampling = tk.Entry(frame_params, width=15)
@@ -425,7 +418,7 @@ entry_sampling.insert(0, "1000")
 button_enter = tk.Button(frame_params, text="Zatwierdź sygnał", command=enter)
 button_enter.grid(row=10, column=0, columnspan=2, pady=15)
 
-#przyciks wczytaj z pliku
+# Przyciks wczytaj z pliku
 button_upload = tk.Button(frame_params, text="Wczytaj z pliku", command=load_file)
 button_upload.grid(row=11, column=0, columnspan=2, pady=5)
 
@@ -469,6 +462,9 @@ do_math_button.grid(row=9, column=2, columnspan=2, pady=10)
 def operate_signals(signals, op):
     if signals[0] is None or signals[1] is None:
         messagebox.showerror("Błąd", "Potrzebne są co najmniej dwa sygnały")
+        return
+    if signals[0].sampling != signals[1].sampling:
+        messagebox.showerror("Błąd", "Sygnały muszą mieć takie samo próbkowanie")
         return
     s1 = signals[0]
     s2 = signals[1]
