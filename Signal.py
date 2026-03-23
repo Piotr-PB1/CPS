@@ -365,6 +365,18 @@ class S10(Signal): # impuls jednostkowy (dyskretny)
         self.discrete_signal = True 
         
     def generate_signal(self): 
+
+
+        self.t = np.arange(-10, 11)
+        idx = np.argmin(np.abs(self.t - self.ns))
+
+        self.signal = np.zeros_like(self.t, dtype=float)
+        self.signal[idx] = self.A
+
+        return self.signal
+
+
+
         self.t = np.arange(-10+self.ns, 11 + self.ns)
         self.signal = np.where(self.t == self.ns, self.A, 0.0) 
         return self.signal

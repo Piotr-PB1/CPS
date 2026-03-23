@@ -470,9 +470,30 @@ def operate_signals(signals, op):
     s2 = signals[1]
 
     # dopasuj długość
-    n = min(len(s1.signal), len(s2.signal))
-    data1 = np.array(s1.signal[:n])
-    data2 = np.array(s2.signal[:n])
+
+    t_start = min(s1.t[0], s2.t[0])
+    t_end   = max(s1.t[-1], s2.t[-1])
+    t_common = np.arange(t_start, t_end, 1/s1.sampling)
+
+    data1 = []
+    for t in t_common:
+        idx = np.argmin(np.abs(s1.t - t))
+        if np.abs(s1.t[idx] - t) < (1 / s1.sampling):
+            data1.append(s1.signal[idx])
+        else:
+            data1.append(0.0)
+
+    data2 = []
+    for t in t_common:
+        idx = np.argmin(np.abs(s2.t - t))
+        if np.abs(s2.t[idx] - t) < (1 / s2.sampling):
+            data2.append(s2.signal[idx])
+        else:
+            data2.append(0.0)
+
+    data1 = np.array(data1)
+    data2 = np.array(data2)
+    
     if op == 'dodawanie':
         result_data = data1 + data2
     elif op == 'odejmowanie':
@@ -481,16 +502,17 @@ def operate_signals(signals, op):
         result_data = data1 * data2
     else:
         result_data = np.divide(data1, data2, out=np.zeros_like(data1), where=data2!=0)
-    t = s1.t[:n] if hasattr(s1, 't') else None
-    discrete = s1.discrete_signal or s2.discrete_signal
+
     new_sig = sg.Signal.from_array(
-        t if t is not None else np.arange(n),
+        t_common,
         result_data,
-        t1=getattr(s1, 't1', 0),
-        sampling=getattr(s1, 'sampling', 1)
+        t1=t_common[0],
+        sampling=s1.sampling
     )
-    new_sig.t = t
-    new_sig.discrete_signal = discrete
+
+    new_sig.t = t_common
+    new_sig.discrete_signal = s1.discrete_signal or s2.discrete_signal
+
     list_of_signals.append(new_sig)
     update_signals_display()
 
