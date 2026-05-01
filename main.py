@@ -468,10 +468,10 @@ Sygnał 2: {idx2+1}. {type(sig2).__name__}
 
 Miary podobieństwa:
 ─────────────────────────────
-MSE (Mean Squared Error):     {mse_val:.6e}
+MSE (Mean Squared Error):     {mse_val:.6f}
 SNR (Signal-to-Noise Ratio):   {snr_val:.2f} dB
 PSNR (Peak SNR):               {psnr_val:.2f} dB
-MD (Maximum Difference):       {md_val:.6e}
+MD (Maximum Difference):       {md_val:.6f}
 ENOB (Effective Bits):         {enob_val:.2f} bits
 """
         
@@ -483,35 +483,28 @@ ENOB (Effective Bits):         {enob_val:.2f} bits
 def quantization(s, i):
     try:
         level = int(quantization_entry.get())
-        method = quantization_method_combo.get()
         
         if level <= 0:
             messagebox.showerror("Błąd", "Poziom kwantyzacji musi być większy od 0")
             return
         
-        # Utwórz kopię sygnału
         quantized_signal = copy.deepcopy(s)
         
-        # Zastosuj kwantyzację do kopii
-        quantized_signal.quantization(level, method)
+        quantized_signal.quantization(level)
         
-        # Dodaj nowy sygnał do listy
         list_of_signals.append(quantized_signal)
         update_signals_display()
         
-        messagebox.showinfo("Sukces", f"Sygnał skwantowany z poziomem {level} ({method}) dodany do listy")
+        messagebox.showinfo("Sukces", f"Sygnał skwantowany z poziomem {level} dodany do listy")
     except ValueError as e:
         messagebox.showerror("Błąd", f"Błąd: {str(e)}")
 
 def extrapolate_signal(s, i):
     try:
-        # Utwórz kopię sygnału
         extrapolated_signal = copy.deepcopy(s)
         
-        # Zastosuj ekstrapolację do kopii
         extrapolated_signal.extrapolation(extrapolation_combo.get())
         
-        # Dodaj nowy sygnał do listy
         list_of_signals.append(extrapolated_signal)
         update_signals_display()
         
@@ -659,16 +652,10 @@ quantization_label.grid(row=6, column=5, padx=5, pady=5)
 quantization_entry = tk.Entry(frame_params, width=15)
 quantization_entry.grid(row=7, column=5, columnspan=2, pady=5)
 
-quantization_method_label = tk.Label(frame_params, text="Metoda kwantyzacji:")
-quantization_method_label.grid(row=8, column=5, padx=5, pady=5)
-quantization_method_combo = ttk.Combobox(frame_params, values=["truncation", "rounding"], state="readonly")
-quantization_method_combo.grid(row=9, column=5, columnspan=2, pady=5)
-quantization_method_combo.current(0)
-
 extrapolation_label = tk.Label(frame_params, text="Wybierz typ ekstrapolacji dla sygnału:")
-extrapolation_label.grid(row=10, column=5, padx=5, pady=5)
+extrapolation_label.grid(row=8, column=5, padx=5, pady=5)
 extrapolation_combo = ttk.Combobox(frame_params, values=["zero", "sinc"], state="readonly")
-extrapolation_combo.grid(row=11, column=5, columnspan=2, pady=5)
+extrapolation_combo.grid(row=9, column=5, columnspan=2, pady=5)
 extrapolation_combo.current(0)
 
 # Sekcja porównywania sygnałów
