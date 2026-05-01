@@ -3,6 +3,7 @@ import Signal as sg
 from tkinter import messagebox, filedialog, ttk
 import matplotlib.pyplot as plt
 import numpy as np
+import copy
 
 SYGNALY = [
     "szum o rozkładzie jednostajnym",
@@ -71,7 +72,7 @@ def update_signals_display():
         
         # Przycisk pokaż wykres czasowy
         btn_chart = tk.Button(frame, text="Wykres", width=10,
-                             command=lambda s=signal, i=idx: show_signal_chart(s, i))
+                            command=lambda s=signal, i=idx: show_signal_chart(s, i))
         btn_chart.pack(side=tk.LEFT, padx=2, pady=5)
         
         # Przycisk pokaż histogram
@@ -81,8 +82,18 @@ def update_signals_display():
                 
         #prametry sygnału
         btn_params = tk.Button(frame, text="Parametry", width=10, 
-                               command=lambda s=signal: signal_params_to_labels(s))
+                            command=lambda s=signal: signal_params_to_labels(s))
         btn_params.pack(side=tk.LEFT, padx=2, pady=5)
+
+        #kwantyzacja sygnau
+        btn_quantization = tk.Button(frame, text="Kwantyzacja", width=12,
+                            command=lambda s= signal, i=idx: quantization(s, i))
+        btn_quantization.pack(side=tk.LEFT, padx=2, pady=5)
+
+        #ekstrapolacja sygnału
+        btn_extrapolation = tk.Button(frame, text="Ekstrapolacja", width=12,
+                            command=lambda s=signal, i=idx: extrapolate_signal(s, i))
+        btn_extrapolation.pack(side=tk.LEFT, padx=2, pady=5)
         
         # Przycisk usuń
         btn_delete = tk.Button(frame, text="Usuń", width=8, bg="#ff6b6b", fg="white",
@@ -94,6 +105,14 @@ def update_signals_display():
         ]
 
         combo_2_list_signal_2_math['values'] = [
+            f"{idx+1}. {type(s).__name__}" for idx, s in enumerate(list_of_signals)
+        ]
+
+        comparison_signal1_combo['values'] = [
+            f"{idx+1}. {type(s).__name__}" for idx, s in enumerate(list_of_signals)
+        ]
+
+        comparison_signal2_combo['values'] = [
             f"{idx+1}. {type(s).__name__}" for idx, s in enumerate(list_of_signals)
         ]
         
@@ -161,6 +180,7 @@ def save_signal_txt(signal, idx):
 def show_signal_chart(signal, idx):
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
+
     plt.figure(figsize=(10, 5))
     plt.style.use('seaborn-v0_8-whitegrid')
     if signal.discrete_signal:
@@ -313,9 +333,195 @@ def update_fields(event=None):
         entry_p.config(state='disabled')
         entry_p.delete(0, tk.END)
 
+
+def chosen_signal_to_do_math(event=None):
+    index1 = combo_1_list_signal_1_math.current()
+    index2 = combo_2_list_signal_2_math.current()
+    return list_of_signals[index1], list_of_signals[index2]
+
+def operate_signals(signals, op):
+    if signals[0] is None or signals[1] is None:
+        messagebox.showerror("Błąd", "Potrzebne są co najmniej dwa sygnały")
+        return
+    if signals[0].sampling != signals[1].sampling:
+        messagebox.showerror("Błąd", "Sygnały muszą mieć takie samo próbkowanie")
+        return
+    s1 = signals[0]
+    s2 = signals[1]
+
+    # dopasuj długość
+
+    t_start = min(s1.t[0], s2.t[0])
+    t_end   = max(s1.t[-1], s2.t[-1])
+    t_common = np.arange(t_start, t_end, 1/s1.sampling)
+
+    data1 = []
+    for t in t_common:
+        idx = np.argmin(np.abs(s1.t - t))
+        if np.abs(s1.t[idx] - t) < (1 / s1.sampling):
+            data1.append(s1.signal[idx])
+        else:
+            data1.append(0.0)
+
+    data2 = []
+    for t in t_common:
+        idx = np.argmin(np.abs(s2.t - t))
+        if np.abs(s2.t[idx] - t) < (1 / s2.sampling):
+            data2.append(s2.signal[idx])
+        else:
+            data2.append(0.0)
+
+    data1 = np.array(data1)
+    data2 = np.array(data2)
+    
+    if op == 'dodawanie':
+        result_data = data1 + data2
+    elif op == 'odejmowanie':
+        result_data = data1 - data2
+    elif op == 'mnożenie':
+        result_data = data1 * data2
+    else:
+        result_data = np.divide(data1, data2, out=np.zeros_like(data1), where=data2!=0)
+
+    new_sig = sg.Signal.from_array(
+        t_common,
+        result_data,
+        t1=t_common[0],
+        sampling=s1.sampling
+    )
+
+    new_sig.t = t_common
+    new_sig.discrete_signal = s1.discrete_signal or s2.discrete_signal
+
+    list_of_signals.append(new_sig)
+    update_signals_display()
+
+def signal_params_to_labels(signal):
+
+    avereage_value_label = tk.Label(frame_params, text=f"Średnia wartość sygnału: {signal.mean_value():.2f}")
+    avereage_value_label.grid(row=0, column=5, padx=5, pady=5)
+
+    average_abs_value_label = tk.Label(frame_params, text=f"Średnia wartość bezwzględna sygnału: {signal.mean_abs_value():.2f}")
+    average_abs_value_label.grid(row=1, column=5, padx=5, pady=5)
+
+    variance_label = tk.Label(frame_params, text=f"Wariancja sygnału: {signal.variance():.2f}")
+    variance_label.grid(row=2, column=5, padx=5, pady=5)
+
+    RMS_value_label = tk.Label(frame_params, text=f"Wartość skuteczna (RMS) sygnału: {signal.rms_value():.2f}")
+    RMS_value_label.grid(row=3, column=5, padx=5, pady=5)
+
+    power_label = tk.Label(frame_params, text=f"Moc sygnału: {signal.power():.2f}")
+    power_label.grid(row=4, column=5, padx=5, pady=5)
+
+def compare_signals(idx1, idx2):
+    """
+    Porównuje dwa sygnały i wyświetla miary podobieństwa.
+    """
+    if idx1 < 0 or idx2 < 0:
+        messagebox.showerror("Błąd", "Wybierz oba sygnały do porównania")
+        return
+    
+    if idx1 >= len(list_of_signals) or idx2 >= len(list_of_signals):
+        messagebox.showerror("Błąd", "Błędny indeks sygnału")
+        return
+    
+    try:
+        sig1 = list_of_signals[idx1]
+        sig2 = list_of_signals[idx2]
+        
+        # Upewnij się, że sygnały są wygenerowane
+        if sig1.signal is None:
+            sig1.generate_signal()
+        if sig2.signal is None:
+            sig2.generate_signal()
+        
+        # Jeśli sygnały mają różne długości, interpoluj drugą do pierwszej
+        if len(sig1.signal) != len(sig2.signal):
+            # Interpoluj sig2 do długości sig1
+            from scipy.interpolate import interp1d
+            if len(sig2.signal) > 1:
+                f = interp1d(np.linspace(0, 1, len(sig2.signal)), sig2.signal, kind='linear', fill_value='extrapolate')
+                sig2_interp = f(np.linspace(0, 1, len(sig1.signal)))
+            else:
+                sig2_interp = np.full_like(sig1.signal, sig2.signal[0])
+            
+            # Tymczasowo zastąp sig2.signal
+            sig2_original = sig2.signal
+            sig2.signal = sig2_interp
+        
+        # Oblicz miary
+        mse_val = sig1.mse(sig2)
+        snr_val = sig1.snr_db(sig2)
+        psnr_val = sig1.psnr_db(sig2)
+        md_val = sig1.max_difference(sig2)
+        enob_val = sig1.enob(sig2)
+        
+        # Przywróć oryginalny sygnał
+        if len(sig1.signal) != len(list_of_signals[idx2].signal):
+            sig2.signal = sig2_original
+        
+        # Wyświetl wyniki
+        result_text = f"""
+Porównanie sygnałów:
+Sygnał 1: {idx1+1}. {type(sig1).__name__}
+Sygnał 2: {idx2+1}. {type(sig2).__name__}
+
+Miary podobieństwa:
+─────────────────────────────
+MSE (Mean Squared Error):     {mse_val:.6e}
+SNR (Signal-to-Noise Ratio):   {snr_val:.2f} dB
+PSNR (Peak SNR):               {psnr_val:.2f} dB
+MD (Maximum Difference):       {md_val:.6e}
+ENOB (Effective Bits):         {enob_val:.2f} bits
+"""
+        
+        messagebox.showinfo("Wyniki porównania", result_text)
+        
+    except Exception as e:
+        messagebox.showerror("Błąd", f"Błąd podczas porównywania: {str(e)}")
+
+def quantization(s, i):
+    try:
+        level = int(quantization_entry.get())
+        method = quantization_method_combo.get()
+        
+        if level <= 0:
+            messagebox.showerror("Błąd", "Poziom kwantyzacji musi być większy od 0")
+            return
+        
+        # Utwórz kopię sygnału
+        quantized_signal = copy.deepcopy(s)
+        
+        # Zastosuj kwantyzację do kopii
+        quantized_signal.quantization(level, method)
+        
+        # Dodaj nowy sygnał do listy
+        list_of_signals.append(quantized_signal)
+        update_signals_display()
+        
+        messagebox.showinfo("Sukces", f"Sygnał skwantowany z poziomem {level} ({method}) dodany do listy")
+    except ValueError as e:
+        messagebox.showerror("Błąd", f"Błąd: {str(e)}")
+
+def extrapolate_signal(s, i):
+    try:
+        # Utwórz kopię sygnału
+        extrapolated_signal = copy.deepcopy(s)
+        
+        # Zastosuj ekstrapolację do kopii
+        extrapolated_signal.extrapolation(extrapolation_combo.get())
+        
+        # Dodaj nowy sygnał do listy
+        list_of_signals.append(extrapolated_signal)
+        update_signals_display()
+        
+        messagebox.showinfo("Sukces", f"Sygnał ekstrapolowany dodany do listy")
+    except Exception as e:
+        messagebox.showerror("Błąd", f"Wystąpił błąd podczas ekstrapolacji: {str(e)}")
+
 root = tk.Tk()
 root.title("Signal manipulator")
-root.geometry("1200x700")
+root.geometry("1200x900")
 
 label_signals = tk.Label(root, text="Stworzone sygnały:", font=("Arial", 10, "bold"))
 label_signals.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
@@ -448,90 +654,47 @@ combo_3_list_operation = ttk.Combobox(frame_params, values=["dodawanie", "odejmo
 combo_3_list_operation.grid(row=8, column=2, columnspan=2, pady=5)
 combo_3_list_operation.current(0)
 
-def chosen_signal_to_do_math(event=None):
-    index1 = combo_1_list_signal_1_math.current()
-    index2 = combo_2_list_signal_2_math.current()
-    return list_of_signals[index1], list_of_signals[index2]
+quantization_label = tk.Label(frame_params, text="Podaj liczbę poziomów kwantyzacji:")
+quantization_label.grid(row=6, column=5, padx=5, pady=5)
+quantization_entry = tk.Entry(frame_params, width=15)
+quantization_entry.grid(row=7, column=5, columnspan=2, pady=5)
+
+quantization_method_label = tk.Label(frame_params, text="Metoda kwantyzacji:")
+quantization_method_label.grid(row=8, column=5, padx=5, pady=5)
+quantization_method_combo = ttk.Combobox(frame_params, values=["truncation", "rounding"], state="readonly")
+quantization_method_combo.grid(row=9, column=5, columnspan=2, pady=5)
+quantization_method_combo.current(0)
+
+extrapolation_label = tk.Label(frame_params, text="Wybierz typ ekstrapolacji dla sygnału:")
+extrapolation_label.grid(row=10, column=5, padx=5, pady=5)
+extrapolation_combo = ttk.Combobox(frame_params, values=["zero", "sinc"], state="readonly")
+extrapolation_combo.grid(row=11, column=5, columnspan=2, pady=5)
+extrapolation_combo.current(0)
+
+# Sekcja porównywania sygnałów
+comparison_label = tk.Label(frame_params, text="Porównaj dwa sygnały:", font=("Arial", 10, "bold"))
+comparison_label.grid(row=0, column=8, columnspan=3, padx=5, pady=10)
+
+comparison_signal1_label = tk.Label(frame_params, text="Sygnał 1:")
+comparison_signal1_label.grid(row=1, column=8, padx=5, pady=5, sticky="e")
+comparison_signal1_combo = ttk.Combobox(frame_params, values=[], state="readonly")
+comparison_signal1_combo.grid(row=1, column=9, columnspan=2, pady=5)
+
+comparison_signal2_label = tk.Label(frame_params, text="Sygnał 2:")
+comparison_signal2_label.grid(row=2, column=8, padx=5, pady=5, sticky="e")
+comparison_signal2_combo = ttk.Combobox(frame_params, values=[], state="readonly")
+comparison_signal2_combo.grid(row=2, column=9, columnspan=2, pady=5)
+
+comparison_button = tk.Button(frame_params, text="Porównaj sygnały", command=lambda: compare_signals(
+    comparison_signal1_combo.current(), comparison_signal2_combo.current()))
+comparison_button.grid(row=3, column=8, columnspan=2, pady=10)
+
 
 combo_1_list_signal_1_math.bind("<<ComboboxSelected>>", chosen_signal_to_do_math)
 combo_2_list_signal_2_math.bind("<<ComboboxSelected>>", chosen_signal_to_do_math)
 
 do_math_button = tk.Button(frame_params, text="Wykonaj operację", command=lambda: operate_signals(chosen_signal_to_do_math(), combo_3_list_operation.get()))
 do_math_button.grid(row=9, column=2, columnspan=2, pady=10)
-
-def operate_signals(signals, op):
-    if signals[0] is None or signals[1] is None:
-        messagebox.showerror("Błąd", "Potrzebne są co najmniej dwa sygnały")
-        return
-    if signals[0].sampling != signals[1].sampling:
-        messagebox.showerror("Błąd", "Sygnały muszą mieć takie samo próbkowanie")
-        return
-    s1 = signals[0]
-    s2 = signals[1]
-
-    # dopasuj długość
-
-    t_start = min(s1.t[0], s2.t[0])
-    t_end   = max(s1.t[-1], s2.t[-1])
-    t_common = np.arange(t_start, t_end, 1/s1.sampling)
-
-    data1 = []
-    for t in t_common:
-        idx = np.argmin(np.abs(s1.t - t))
-        if np.abs(s1.t[idx] - t) < (1 / s1.sampling):
-            data1.append(s1.signal[idx])
-        else:
-            data1.append(0.0)
-
-    data2 = []
-    for t in t_common:
-        idx = np.argmin(np.abs(s2.t - t))
-        if np.abs(s2.t[idx] - t) < (1 / s2.sampling):
-            data2.append(s2.signal[idx])
-        else:
-            data2.append(0.0)
-
-    data1 = np.array(data1)
-    data2 = np.array(data2)
-    
-    if op == 'dodawanie':
-        result_data = data1 + data2
-    elif op == 'odejmowanie':
-        result_data = data1 - data2
-    elif op == 'mnożenie':
-        result_data = data1 * data2
-    else:
-        result_data = np.divide(data1, data2, out=np.zeros_like(data1), where=data2!=0)
-
-    new_sig = sg.Signal.from_array(
-        t_common,
-        result_data,
-        t1=t_common[0],
-        sampling=s1.sampling
-    )
-
-    new_sig.t = t_common
-    new_sig.discrete_signal = s1.discrete_signal or s2.discrete_signal
-
-    list_of_signals.append(new_sig)
-    update_signals_display()
-
-def signal_params_to_labels(signal):
-
-    avereage_value_label = tk.Label(frame_params, text=f"Średnia wartość sygnału: {signal.mean_value():.2f}")
-    avereage_value_label.grid(row=0, column=5, padx=5, pady=5)
-
-    average_abs_value_label = tk.Label(frame_params, text=f"Średnia wartość bezwzględna sygnału: {signal.mean_abs_value():.2f}")
-    average_abs_value_label.grid(row=1, column=5, padx=5, pady=5)
-
-    variance_label = tk.Label(frame_params, text=f"Wariancja sygnału: {signal.variance():.2f}")
-    variance_label.grid(row=2, column=5, padx=5, pady=5)
-
-    RMS_value_label = tk.Label(frame_params, text=f"Wartość skuteczna (RMS) sygnału: {signal.rms_value():.2f}")
-    RMS_value_label.grid(row=3, column=5, padx=5, pady=5)
-
-    power_label = tk.Label(frame_params, text=f"Moc sygnału: {signal.power():.2f}")
-    power_label.grid(row=4, column=5, padx=5, pady=5)
 
 lb.bind('<<ListboxSelect>>', update_fields)
 

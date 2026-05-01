@@ -20,6 +20,7 @@ class Signal:
         self.signal = None    
         self.t = None         
         self.discrete_signal = False
+        self.quantization_signal = None
 
     def __str__(self):
         return f"{type(self).__name__}(A={self.A}, T={self.T}, t1={self.t1}, d={self.d}, kw={self.kw}, ts={self.ts}, ns={self.ns}, n1={self.n1}, p={self.p}, sampling={self.sampling})"
@@ -245,6 +246,206 @@ class Signal:
         if self.signal is None:
             self.generate_signal()
         return np.sqrt(self.power())
+
+    def quantization(self, level, method="truncation"):
+        """
+        Kwantyzacja równomierna sygnału.
+        
+        Args:
+            level: liczba bitów (liczba poziomów = 2^level)
+            method: "truncation" - obcięcie, "rounding" - zaokrąglanie
+        """
+        if level <= 1:
+            raise ValueError("Liczba poziomów kwantyzacji musi być większa od 1")
+
+        levels = 2**level
+        min_val = np.min(self.signal)
+        max_val = np.max(self.signal)
+        
+        # Obsługa sygnału o zerowym zakresie
+        if max_val == min_val:
+            return
+        
+        step = (max_val - min_val) / levels
+        
+        # Normalizuj sygnał do przedziału [0, levels)
+        scaled = (self.signal - min_val) / step
+        
+        if method == "truncation":
+            # Obcięcie - zaokrąglij w dół
+            indices = np.floor(scaled).astype(int)
+        elif method == "rounding":
+            # Zaokrąglanie - standardowe zaokrąglenie
+            indices = np.round(scaled).astype(int)
+        else:
+            raise ValueError(f"Nieznana metoda: {method}")
+        
+        # Ogranicz indeksy do zakresu [0, levels-1]
+        indices = np.clip(indices, 0, levels - 1)
+        
+        # Odtwórz sygnał z kwantowanych wartości
+        # Każdy poziom reprezentowany jest przez środek przedziału
+        self.signal = min_val + (indices + 0.5) * step
+            
+
+    def extrapolation(self, type, oversample=10, sinc_samples=10):
+        """
+        Rekonstrukcja sygnału z próbek dyskretnych.
+        
+        Args:
+            type: "zero" - ekstrapolacja zerowego rzędu, "sinc" - interpolacja sinc
+            oversample: współczynnik nadpróbkowania (ile razy więcej próbek w wyjściu)
+            sinc_samples: liczba próbek do użycia w interpolacji sinc
+        """
+        if type == "zero":
+            # Ekstrapolacja zerowego rzędu (zero-order hold)
+            # Każda próbka jest utrzymywana aż do następnej próbki
+            Ts = 1.0 / self.sampling
+            T_new = Ts / oversample
+            
+            # Generuj nowe punkty czasu
+            t_new = np.arange(0, len(self.signal) * Ts - T_new/2, T_new)
+            signal_out = np.zeros_like(t_new)
+            
+            # Dla każdego nowego czasu, znajdź odpowiednią próbkę
+            for i, t in enumerate(t_new):
+                # Indeks próbki (którą próbkę mamy utrzymywać)
+                idx = int(t / Ts)
+                # Ogranicz do zakresu
+                if idx >= len(self.signal):
+                    idx = len(self.signal) - 1
+                signal_out[i] = self.signal[idx]
+            
+            self.t = self.t1 + t_new
+            self.signal = signal_out
+            return signal_out
+
+        elif type == "sinc":
+            # Interpolacja sinc (whittaker-shannon interpolation)
+            Ts = 1.0 / self.sampling
+            T_new = Ts / oversample
+            
+            # Generuj nowe punkty czasu
+            t_new = np.arange(0, len(self.signal) * Ts - T_new/2, T_new)
+            signal_out = np.zeros_like(t_new)
+            
+            # Dla każdego nowego czasu, oblicz wartość używając interpolacji sinc
+            for i, t in enumerate(t_new):
+                # Normalizuj czas względem okresу próbkowania
+                t_norm = t / Ts
+                
+                # Suma z ograniczoną liczbą próbek
+                value = 0.0
+                center = int(t_norm)
+                start = max(0, center - sinc_samples // 2)
+                end = min(len(self.signal), center + sinc_samples // 2 + 1)
+                
+                for n in range(start, end):
+                    # sinc(x) = sin(πx)/(πx)
+                    x = t_norm - n
+                    if x == 0:
+                        sinc_val = 1.0
+                    else:
+                        sinc_val = np.sin(np.pi * x) / (np.pi * x)
+                    value += self.signal[n] * sinc_val
+                
+                signal_out[i] = value
+            
+            self.t = self.t1 + t_new
+            self.signal = signal_out
+            return signal_out
+        else:
+            raise ValueError("Nieznany typ ekstrapolacji")
+
+    def mse(self, other):
+        """
+        Błąd średniokwadratowy (Mean Squared Error).
+        Porównuje obecny sygnał z innym sygnałem.
+        
+        Args:
+            other: drugi sygnał do porównania
+            
+        Returns:
+            MSE value
+        """
+        if len(self.signal) != len(other.signal):
+            raise ValueError("Sygnały muszą mieć tę samą długość")
+        
+        return np.mean((self.signal - other.signal) ** 2)
+    
+    def snr_db(self, other):
+        """
+        Stosunek sygnał-szum w decybelach (Signal to Noise Ratio).
+        
+        Args:
+            other: sygnał odniesienia
+            
+        Returns:
+            SNR w dB
+        """
+        if len(self.signal) != len(other.signal):
+            raise ValueError("Sygnały muszą mieć tę samą długość")
+        
+        signal_power = np.sum(other.signal ** 2)
+        noise_power = np.sum((self.signal - other.signal) ** 2)
+        
+        if noise_power == 0:
+            return np.inf
+        
+        return 10 * np.log10(signal_power / noise_power)
+    
+    def psnr_db(self, other):
+        """
+        Szczytowy stosunek sygnał-szum (Peak Signal to Noise Ratio).
+        
+        Args:
+            other: sygnał odniesienia
+            
+        Returns:
+            PSNR w dB
+        """
+        if len(self.signal) != len(other.signal):
+            raise ValueError("Sygnały muszą mieć tę samą długość")
+        
+        mse_val = self.mse(other)
+        
+        if mse_val == 0:
+            return np.inf
+        
+        max_val = np.max(np.abs(other.signal))
+        
+        return 10 * np.log10(max_val ** 2 / mse_val)
+    
+    def max_difference(self, other):
+        """
+        Maksymalna różnica (Maximum Difference) między sygnałami.
+        
+        Args:
+            other: sygnał do porównania
+            
+        Returns:
+            Maksymalna różnica
+        """
+        if len(self.signal) != len(other.signal):
+            raise ValueError("Sygnały muszą mieć tę samą długość")
+        
+        return np.max(np.abs(self.signal - other.signal))
+    
+    def enob(self, other):
+        """
+        Efektywna liczba bitów (Effective Number of Bits).
+        Obliczona na podstawie SNR: ENOB = (SNR - 1.76) / 6.02
+        
+        Args:
+            other: sygnał odniesienia
+            
+        Returns:
+            ENOB value
+        """
+        snr = self.snr_db(other)
+        if snr == np.inf:
+            return np.inf
+        return (snr - 1.76) / 6.02
 
 # ---------------- konkretne sygnały ----------------
 
