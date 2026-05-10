@@ -180,6 +180,9 @@ def save_signal_txt(signal, idx):
 def show_signal_chart(signal, idx):
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
+    
+    # Sprawdź i napraw ewentualne niezgodności
+    signal._validate_arrays()
 
     plt.figure(figsize=(10, 5))
     plt.style.use('seaborn-v0_8-whitegrid')
@@ -198,6 +201,8 @@ def show_signal_histogram(signal, _):
 
     if not hasattr(signal, 'signal') or signal.signal is None:
         signal.generate_signal()
+    
+    signal._validate_arrays()
     
     plt.figure(figsize=(12, 6))
     plt.hist(signal.signal, bins=int(combo.get()), edgecolor='black', alpha=0.7, color='green')
@@ -416,6 +421,7 @@ def signal_params_to_labels(signal):
 def compare_signals(idx1, idx2):
     """
     Porównuje dwa sygnały i wyświetla miary podobieństwa.
+    Sygnały są porównywane na wspólnym przedziale czasowym.
     """
     if idx1 < 0 or idx2 < 0:
         messagebox.showerror("Błąd", "Wybierz oba sygnały do porównania")
@@ -435,36 +441,52 @@ def compare_signals(idx1, idx2):
         if sig2.signal is None:
             sig2.generate_signal()
         
-        # Jeśli sygnały mają różne długości, interpoluj drugą do pierwszej
-        if len(sig1.signal) != len(sig2.signal):
-            # Interpoluj sig2 do długości sig1
-            from scipy.interpolate import interp1d
-            if len(sig2.signal) > 1:
-                f = interp1d(np.linspace(0, 1, len(sig2.signal)), sig2.signal, kind='linear', fill_value='extrapolate')
-                sig2_interp = f(np.linspace(0, 1, len(sig1.signal)))
-            else:
-                sig2_interp = np.full_like(sig1.signal, sig2.signal[0])
-            
-            # Tymczasowo zastąp sig2.signal
-            sig2_original = sig2.signal
-            sig2.signal = sig2_interp
+        # Porównaj sygnały na wspólnym przedziale czasowym
+        from scipy.interpolate import interp1d
+        
+        # Wyznacz wspólny przedział czasowy
+        t1_start, t1_end = sig1.t[0], sig1.t[-1]
+        t2_start, t2_end = sig2.t[0], sig2.t[-1]
+        
+        t_start = max(t1_start, t2_start)
+        t_end = min(t1_end, t2_end)
+        
+        # Liczba próbek do porównania - użyj większego próbkowania z obu sygnałów
+        n_compare = max(len(sig1.signal), len(sig2.signal))
+        t_common = np.linspace(t_start, t_end, n_compare)
+        
+        # Interpoluj oba sygnały na wspólną oś czasową
+        if len(sig1.signal) > 1:
+            f1 = interp1d(sig1.t, sig1.signal, kind='linear', fill_value='extrapolate')
+            sig1_interp = f1(t_common)
+        else:
+            sig1_interp = np.full_like(t_common, sig1.signal[0])
+        
+        if len(sig2.signal) > 1:
+            f2 = interp1d(sig2.t, sig2.signal, kind='linear', fill_value='extrapolate')
+            sig2_interp = f2(t_common)
+        else:
+            sig2_interp = np.full_like(t_common, sig2.signal[0])
+        
+        # Utwórz tymczasowe obiekty do porównania
+        sig1_temp = sg.Signal.from_array(t_common, sig1_interp, t1=t_common[0], sampling=len(t_common)/(t_end-t_start))
+        sig2_temp = sg.Signal.from_array(t_common, sig2_interp, t1=t_common[0], sampling=len(t_common)/(t_end-t_start))
         
         # Oblicz miary
-        mse_val = sig1.mse(sig2)
-        snr_val = sig1.snr_db(sig2)
-        psnr_val = sig1.psnr_db(sig2)
-        md_val = sig1.max_difference(sig2)
-        enob_val = sig1.enob(sig2)
-        
-        # Przywróć oryginalny sygnał
-        if len(sig1.signal) != len(list_of_signals[idx2].signal):
-            sig2.signal = sig2_original
+        mse_val = sig1_temp.mse(sig2_temp)
+        snr_val = sig1_temp.snr_db(sig2_temp)
+        psnr_val = sig1_temp.psnr_db(sig2_temp)
+        md_val = sig1_temp.max_difference(sig2_temp)
+        enob_val = sig1_temp.enob(sig2_temp)
         
         # Wyświetl wyniki
         result_text = f"""
-Porównanie sygnałów:
+Porównanie sygnałów (na wspólnym przedziale czasowym):
 Sygnał 1: {idx1+1}. {type(sig1).__name__}
 Sygnał 2: {idx2+1}. {type(sig2).__name__}
+
+Przedział czasowy: [{t_start:.6f}, {t_end:.6f}]
+Liczba próbek do porównania: {n_compare}
 
 Miary podobieństwa:
 ─────────────────────────────
@@ -502,6 +524,9 @@ def quantization(s, i):
 def extrapolate_signal(s, i):
     try:
         extrapolated_signal = copy.deepcopy(s)
+
+        if extrapolated_signal.signal is None:
+            extrapolated_signal.generate_signal()
         
         extrapolated_signal.extrapolation(extrapolation_combo.get())
         

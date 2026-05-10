@@ -43,6 +43,15 @@ class Signal:
                 self.generate_signal()
             except Exception:
                 pass
+    
+    def _validate_arrays(self):
+        """Sprawdza i naprawia niezgodności między tablicami t i signal"""
+        if self.signal is None or self.t is None:
+            return
+        
+        if len(self.t) != len(self.signal):
+            # Jeśli długości się nie zgadzają, regeneruj tablicę t
+            self.t = self.t1 + np.arange(len(self.signal)) / self.sampling
 
     def save_to_bin(self, filename):
 
@@ -94,6 +103,7 @@ class Signal:
     def save_to_txt(self, filename):
 
         self._ensure_signal()
+        self._validate_arrays()
 
         with open(filename,"w") as f:
 
@@ -260,15 +270,11 @@ class Signal:
             return
         
         step = (max_val - min_val) / levels
+
+        scaled = step * np.floor(self.signal/step)
+
+        self.signal = scaled
         
-        scaled = (self.signal - min_val) / step
-        
-        indices = np.floor(scaled).astype(int)
-        
-        indices = np.clip(indices, 0, levels - 1)
-        
-        self.signal = min_val + (indices + 0.5) * step
-            
 
     def extrapolation(self, type, oversample=10, sinc_samples=10):
 
@@ -276,13 +282,17 @@ class Signal:
             Ts = 1.0 / self.sampling
             T_new = Ts / oversample
             
-            t_new = np.arange(0, len(self.signal) * Ts - T_new/2, T_new)
-            signal_out = np.zeros_like(t_new)
+            num_samples = len(self.signal)
+            num_new_samples = num_samples * oversample
+            t_new = np.arange(num_new_samples) * T_new
+            signal_out = np.zeros(num_new_samples)
             
             for i, t in enumerate(t_new):
-                idx = int(t / Ts)
+                idx = int((t - self.t1) / Ts)
                 if idx >= len(self.signal):
                     idx = len(self.signal) - 1
+                if idx < 0:
+                    idx = 0
                 signal_out[i] = self.signal[idx]
             
             self.t = self.t1 + t_new
@@ -293,11 +303,13 @@ class Signal:
             Ts = 1.0 / self.sampling
             T_new = Ts / oversample
             
-            t_new = np.arange(0, len(self.signal) * Ts - T_new/2, T_new)
-            signal_out = np.zeros_like(t_new)
+            num_samples = len(self.signal)
+            num_new_samples = num_samples * oversample
+            t_new = np.arange(num_new_samples) * T_new
+            signal_out = np.zeros(num_new_samples)
             
             for i, t in enumerate(t_new):
-                t_norm = t / Ts
+                t_norm = (t - self.t1) / Ts
                 
                 value = 0.0
                 center = int(t_norm)
@@ -332,8 +344,8 @@ class Signal:
         if len(self.signal) != len(other.signal):
             raise ValueError("Sygnały muszą mieć tę samą długość")
         
-        signal_power = np.sum(other.signal ** 2)
-        noise_power = np.sum((self.signal - other.signal) ** 2)
+        signal_power = np.mean(other.signal ** 2)
+        noise_power = np.mean((self.signal - other.signal) ** 2)
         
         if noise_power == 0:
             return np.inf
@@ -486,21 +498,11 @@ class S10(Signal): # impuls jednostkowy (dyskretny)
         self.ns = int(ns) 
         self.discrete_signal = True 
         
-    def generate_signal(self): 
-
-
+    def generate_signal(self):
         self.t = np.arange(-10, 11)
         idx = np.argmin(np.abs(self.t - self.ns))
-
         self.signal = np.zeros_like(self.t, dtype=float)
         self.signal[idx] = self.A
-
-        return self.signal
-
-
-
-        self.t = np.arange(-10+self.ns, 11 + self.ns)
-        self.signal = np.where(self.t == self.ns, self.A, 0.0) 
         return self.signal
     
 class S11(Signal):  # szum impulsowy (dyskretny) - losowy impuls z prawdopodobieństwem p
