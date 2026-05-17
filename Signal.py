@@ -274,9 +274,8 @@ class Signal:
         scaled = step * np.floor(self.signal/step)
 
         self.signal = scaled
-        
 
-    def extrapolation(self, type, oversample=10, sinc_samples=10):
+    def extrapolation(self, type, oversample=10, range_sinc=5):
 
         if type == "zero":
             Ts = 1.0 / self.sampling
@@ -300,32 +299,37 @@ class Signal:
             return signal_out
 
         elif type == "sinc":
+            if range_sinc < 0:
+                raise ValueError("zasięg musi być nieujemne")
+
             Ts = 1.0 / self.sampling
             T_new = Ts / oversample
-            
+
             num_samples = len(self.signal)
             num_new_samples = num_samples * oversample
             t_new = np.arange(num_new_samples) * T_new
             signal_out = np.zeros(num_new_samples)
-            
+
             for i, t in enumerate(t_new):
                 t_norm = (t - self.t1) / Ts
-                
+
                 value = 0.0
                 center = int(t_norm)
-                start = max(0, center - sinc_samples // 2)
-                end = min(len(self.signal), center + sinc_samples // 2 + 1)
-                
+                # użyj symetrycznego zasięgu: zasieg próbek z lewej i prawej strony
+                start = max(0, center - range_sinc)
+                end = min(len(self.signal), center + range_sinc + 1)
+
                 for n in range(start, end):
                     x = t_norm - n
                     if x == 0:
                         sinc_val = 1.0
                     else:
                         sinc_val = np.sin(np.pi * x) / (np.pi * x)
+
                     value += self.signal[n] * sinc_val
-                
+
                 signal_out[i] = value
-            
+
             self.t = self.t1 + t_new
             self.signal = signal_out
             return signal_out

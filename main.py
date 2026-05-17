@@ -50,13 +50,15 @@ def update_signals_display():
         frame.pack(fill=tk.X, padx=5, pady=5)
         
         signal_type = type(signal).__name__
+        dodatkowe_info = getattr(signal, 'info_text', '')
+
         if signal_type.startswith("S11"):
-            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz"
+            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz{dodatkowe_info}"
         elif signal.discrete_signal:
-            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, n1={signal.n1}, ns={signal.ns}, fs={signal.sampling}Hz"
+            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, n1={signal.n1}, ns={signal.ns}, fs={signal.sampling}Hz{dodatkowe_info}"
         else:
-            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz"
-        
+            label_text = f"{idx + 1}. {signal_type} - A={signal.A}, t1={signal.t1}, d={signal.d}, fs={signal.sampling}Hz{dodatkowe_info}"
+
         label = tk.Label(frame, text=label_text, bg="#f0f0f0", justify=tk.LEFT)
         label.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.X, expand=True)
         
@@ -85,16 +87,29 @@ def update_signals_display():
                             command=lambda s=signal: signal_params_to_labels(s))
         btn_params.pack(side=tk.LEFT, padx=2, pady=5)
 
-        #kwantyzacja sygnau
-        btn_quantization = tk.Button(frame, text="Kwantyzacja", width=12,
-                            command=lambda s= signal, i=idx: quantization(s, i))
-        btn_quantization.pack(side=tk.LEFT, padx=2, pady=5)
+        quant_frame = tk.Frame(frame, bg="#f0f0f0")
+        quant_frame.pack(side=tk.LEFT, padx=10)
+        tk.Label(quant_frame, text="Bity:", bg="#f0f0f0", font=("Arial", 8)).pack(side=tk.LEFT)
+        quant_var = tk.StringVar(value="4")
+        tk.Entry(quant_frame, textvariable=quant_var, width=3).pack(side=tk.LEFT, padx=2)
+        tk.Button(quant_frame, text="Kwantyzuj", command=lambda s=signal, i=idx, qv=quant_var: quantization(s, i, qv.get())).pack(side=tk.LEFT, padx=2)
 
-        #ekstrapolacja sygnału
-        btn_extrapolation = tk.Button(frame, text="Ekstrapolacja", width=12,
-                            command=lambda s=signal, i=idx: extrapolate_signal(s, i))
-        btn_extrapolation.pack(side=tk.LEFT, padx=2, pady=5)
+        extra_frame = tk.Frame(frame, bg="#f0f0f0")
+        extra_frame.pack(side=tk.LEFT, padx=10)
+        tk.Label(extra_frame, text="Metoda:", bg="#f0f0f0", font=("Arial", 8)).pack(side=tk.LEFT)
+        extra_var = tk.StringVar(value="sinc") # Domyślnie sinc!
+        extra_combo = ttk.Combobox(extra_frame, textvariable=extra_var, values=["zero", "sinc"], state="readonly", width=5)
+        extra_combo.pack(side=tk.LEFT, padx=2)
         
+        # Pola do wyboru liczby próbek z lewej i prawej strony dla sinc
+        sinc_params = tk.Frame(frame, bg="#f0f0f0")
+        sinc_params.pack(side=tk.LEFT, padx=10)
+        tk.Label(sinc_params, text="Zakres:", bg="#f0f0f0", font=("Arial", 8)).pack(side=tk.LEFT)
+        sinc_range = tk.IntVar(value=5)
+        tk.Entry(sinc_params, textvariable=sinc_range, width=2).pack(side=tk.LEFT, padx=2)
+
+        tk.Button(extra_frame, text="Ekstrapoluj", command=lambda s=signal, i=idx, ev=extra_var, sl=sinc_range: extrapolate_signal(s, i, ev.get(), sl.get())).pack(side=tk.LEFT, padx=2)
+
         # Przycisk usuń
         btn_delete = tk.Button(frame, text="Usuń", width=8, bg="#ff6b6b", fg="white",
                               command=lambda i=idx: delete_signal(i))
@@ -495,56 +510,95 @@ SNR (Signal-to-Noise Ratio):   {snr_val:.2f} dB
 PSNR (Peak SNR):               {psnr_val:.2f} dB
 MD (Maximum Difference):       {md_val:.6f}
 ENOB (Effective Bits):         {enob_val:.2f} bits
+
+Po kliknięciu OK pojawi się wykres porównawczy.
 """
         
         messagebox.showinfo("Wyniki porównania", result_text)
-        
+
+        # GENEROWANIE WYKRESU PORÓWNAWCZEGO
+        plt.figure(figsize=(12, 6))
+        plt.style.use('seaborn-v0_8-whitegrid')
+
+        # Wykres pierwszego sygnału (ciągła linia)
+        if sig1.discrete_signal:
+            plt.stem(sig1_temp.t, sig1_temp.signal, linefmt='b-', markerfmt='bo', basefmt=" ", label=f"Sygnał 1 ({type(sig1).__name__})")
+        else:
+            plt.plot(sig1_temp.t, sig1_temp.signal, 'b-', linewidth=2.5, alpha=0.7, label=f"Sygnał 1 ({type(sig1).__name__})")
+
+        # Wykres drugiego sygnału (przerywana czerwona linia dla odróżnienia)
+        if sig2.discrete_signal:
+            plt.stem(sig2_temp.t, sig2_temp.signal, linefmt='r--', markerfmt='rx', basefmt=" ", label=f"Sygnał 2 ({type(sig2).__name__})")
+        else:
+            plt.plot(sig2_temp.t, sig2_temp.signal, 'r--', linewidth=2, label=f"Sygnał 2 ({type(sig2).__name__})")
+
+        plt.title(f"Wizualne porównanie: Sygnał #{idx1+1} vs Sygnał #{idx2+1}", fontsize=14, weight='bold')
+        plt.xlabel("Czas [s]" if not (sig1.discrete_signal and sig2.discrete_signal) else "Numer próbki")
+        plt.ylabel("Amplituda")
+        plt.legend(loc="upper right")
+        plt.tight_layout()
+        plt.show()
+
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas porównywania: {str(e)}")
 
-def quantization(s, i):
+
+def quantization(s, i, level_str):
     try:
-        level = int(quantization_entry.get())
-        
-        if level <= 0:
-            messagebox.showerror("Błąd", "Poziom kwantyzacji musi być większy od 0")
-            return
-        
+        level = int(level_str)
+        if level <= 0: return messagebox.showerror("Błąd", "Poziom kwantyzacji musi być większy od 0")
         quantized_signal = copy.deepcopy(s)
-        
         quantized_signal.quantization(level)
-        
+
+        # Zapisujemy info o kwantyzacji do zduplikowanego obiektu
+        if not hasattr(quantized_signal, 'info_text'):
+            quantized_signal.info_text = ""
+        quantized_signal.info_text += f" [Kwantyzacja: {level}]"
+
         list_of_signals.append(quantized_signal)
         update_signals_display()
-        
         messagebox.showinfo("Sukces", f"Sygnał skwantowany z poziomem {level} dodany do listy")
     except ValueError as e:
         messagebox.showerror("Błąd", f"Błąd: {str(e)}")
 
-def extrapolate_signal(s, i):
+
+def extrapolate_signal(s, i, method_type, range_sinc=5):
     try:
         extrapolated_signal = copy.deepcopy(s)
+        if extrapolated_signal.signal is None: extrapolated_signal.generate_signal()
+        
+        # Jeśli metoda to sinc, przekaż typ okna
+        if method_type == "sinc":
+            extrapolated_signal.extrapolation(method_type, range_sinc)
+        else:
+            extrapolated_signal.extrapolation(method_type)
 
-        if extrapolated_signal.signal is None:
-            extrapolated_signal.generate_signal()
+        # Zapisujemy info o ekstrapolacji do zduplikowanego obiektu
+        if not hasattr(extrapolated_signal, 'info_text'):
+            extrapolated_signal.info_text = ""
         
-        extrapolated_signal.extrapolation(extrapolation_combo.get())
-        
+        if method_type == "sinc":
+            extrapolated_signal.info_text += f" [Ekstrapolacja: {method_type} ({range_sinc})]"
+        else:
+            extrapolated_signal.info_text += f" [Ekstrapolacja: {method_type}]"
+
         list_of_signals.append(extrapolated_signal)
         update_signals_display()
         
-        messagebox.showinfo("Sukces", f"Sygnał ekstrapolowany dodany do listy")
+        if method_type == "sinc":
+            messagebox.showinfo("Sukces", f"Sygnał ekstrapolowany ({method_type} z zakresem {range_sinc}) dodany do listy")
+        else:
+            messagebox.showinfo("Sukces", f"Sygnał ekstrapolowany ({method_type}) dodany do listy")
     except Exception as e:
-        messagebox.showerror("Błąd", f"Wystąpił błąd podczas ekstrapolacji: {str(e)}")
-
+        messagebox.showerror("Błąd", f"Wystąpił błąd: {str(e)}")
 root = tk.Tk()
 root.title("Signal manipulator")
-root.geometry("1200x900")
+root.state("zoomed")
 
 label_signals = tk.Label(root, text="Stworzone sygnały:", font=("Arial", 10, "bold"))
 label_signals.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
 
-signals_list_canvas = tk.Canvas(root, height=200, width=800, bg="white")
+signals_list_canvas = tk.Canvas(root, height=200, width=1600, bg="white")
 scrollbar = tk.Scrollbar(root, orient=tk.VERTICAL, command=signals_list_canvas.yview)
 signals_list_frame = tk.Frame(signals_list_canvas, bg="white")
 
@@ -671,17 +725,6 @@ combo_3_label.grid(row=7, column=2, padx=5, pady=5)
 combo_3_list_operation = ttk.Combobox(frame_params, values=["dodawanie", "odejmowanie", "mnożenie", "dzielenie"], state="readonly")
 combo_3_list_operation.grid(row=8, column=2, columnspan=2, pady=5)
 combo_3_list_operation.current(0)
-
-quantization_label = tk.Label(frame_params, text="Podaj liczbę poziomów kwantyzacji:")
-quantization_label.grid(row=6, column=5, padx=5, pady=5)
-quantization_entry = tk.Entry(frame_params, width=15)
-quantization_entry.grid(row=7, column=5, columnspan=2, pady=5)
-
-extrapolation_label = tk.Label(frame_params, text="Wybierz typ ekstrapolacji dla sygnału:")
-extrapolation_label.grid(row=8, column=5, padx=5, pady=5)
-extrapolation_combo = ttk.Combobox(frame_params, values=["zero", "sinc"], state="readonly")
-extrapolation_combo.grid(row=9, column=5, columnspan=2, pady=5)
-extrapolation_combo.current(0)
 
 # Sekcja porównywania sygnałów
 comparison_label = tk.Label(frame_params, text="Porównaj dwa sygnały:", font=("Arial", 10, "bold"))
