@@ -29,12 +29,12 @@ class Signal:
         raise NotImplementedError()
 
     @classmethod
-    def from_array(cls, t_values, signal_values, t1=0.0, sampling=1):
+    def from_array(cls, t_values, signal_values, t1=0.0, sampling=1, discrete_signal=False):
         obj = cls(0, t1, (t_values[-1] - t_values[0]) if len(t_values) > 1 else 0.0)
         obj.t = np.array(t_values)
         obj.signal = np.array(signal_values)
         obj.sampling = sampling
-        obj.discrete_signal = True
+        obj.discrete_signal = bool(discrete_signal)
         return obj
 
     def _ensure_signal(self):
@@ -50,7 +50,6 @@ class Signal:
             return
         
         if len(self.t) != len(self.signal):
-            # Jeśli długości się nie zgadzają, regeneruj tablicę t
             self.t = self.t1 + np.arange(len(self.signal)) / self.sampling
 
     def save_to_bin(self, filename):
@@ -275,7 +274,7 @@ class Signal:
 
         self.signal = scaled
 
-    def extrapolation(self, type, oversample=10, range_sinc=5):
+    def extrapolation(self, type, oversample=10, range_sinc=1):
 
         if type == "zero":
             Ts = 1.0 / self.sampling
@@ -301,6 +300,7 @@ class Signal:
         elif type == "sinc":
             if range_sinc < 0:
                 raise ValueError("zasięg musi być nieujemne")
+            print(f"Extrapolacja sinc: oversample={oversample}, range_sinc={range_sinc}")
 
             Ts = 1.0 / self.sampling
             T_new = Ts / oversample
@@ -310,21 +310,23 @@ class Signal:
             t_new = np.arange(num_new_samples) * T_new
             signal_out = np.zeros(num_new_samples)
 
+            # print(f"Próbka {i+1}/{num_new_samples}, t={t:.4f}")
             for i, t in enumerate(t_new):
                 t_norm = (t - self.t1) / Ts
 
                 value = 0.0
                 center = int(t_norm)
-                # użyj symetrycznego zasięgu: zasieg próbek z lewej i prawej strony
-                start = max(0, center - range_sinc)
+                start = max(0, center - range_sinc + 1)
                 end = min(len(self.signal), center + range_sinc + 1)
-
+                print("ilość próbek branych pod uwagę:")
                 for n in range(start, end):
+                    
+                    print(f"t={t:.4f}, n={n}, t_norm={t_norm:.4f}")
                     x = t_norm - n
                     if x == 0:
                         sinc_val = 1.0
                     else:
-                        sinc_val = np.sin(np.pi * x) / (np.pi * x)
+                        sinc_val = np.sinc(x)
 
                     value += self.signal[n] * sinc_val
 
