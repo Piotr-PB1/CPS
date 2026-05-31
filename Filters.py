@@ -2,24 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-import numpy as np
-
-
-def convolution(h, x, mode='full', compensate_delay=True):
-    """
-    Ręczna implementacja splotu dyskretnego.
-
-    Parametry:
-    - h : odpowiedź impulsowa / filtr
-    - x : sygnał wejściowy
-    - mode:
-        'full'  -> pełny splot
-        'same'  -> wynik o długości sygnału x
-        'valid' -> tylko pełne nakładanie
-
-    Zwraca:
-    - tablica numpy ze splotem
-    """
+def convolution(h, x, mode='full'):
     M = len(h)
     N = len(x)
     full_length = N + M - 1
@@ -54,25 +37,15 @@ def convolution(h, x, mode='full', compensate_delay=True):
 
 
 def hamming_window(M):
-    """
-    Okno Hamminga wg wzoru (5) z zadania.
-    w(n) = 0.53836 - 0.46164 * cos(2πn/M)
-    """
     n = np.arange(M)
     return 0.53836 - 0.46164 * np.cos(2 * np.pi * n / M)
 
 
 def rectangular_window(M):
-    """Okno prostokątne (domyślne)"""
     return np.ones(M)
 
 
 def lowpass_filter_coefficients(M, K):
-    """
-    Współczynniki filtru dolnoprzepustowego wg wzoru (4) z zadania.
-    h(n) = 2/K dla n=(M-1)/2
-    h(n) = sin(2π(n-(M-1)/2)/K) / (π(n-(M-1)/2)) w pozostałych przypadkach
-    """
     if M % 2 == 0:
         raise ValueError("M musi być nieparzyste!")
 
@@ -91,9 +64,6 @@ def lowpass_filter_coefficients(M, K):
 
 
 def apply_window(h, window_type='rectangular'):
-    """
-    Zastosuj funkcję okna do współczynników filtru.
-    """
     M = len(h)
     
     if window_type == 'rectangular':
@@ -107,12 +77,6 @@ def apply_window(h, window_type='rectangular'):
 
 
 def bandpass_filter_coefficients(h, filter_type='bandpass'):
-    """
-    Transformuj filtr dolnoprzepustowy na filtr bandpass/highpass.
-    
-    Dla bandpass: mnóż przez 2*sin(πn/2) wg str. 7 zadania
-    Dla highpass: mnóż przez (-1)^n
-    """
     h_modified = np.copy(h)
     M = len(h)
 
@@ -127,34 +91,13 @@ def bandpass_filter_coefficients(h, filter_type='bandpass'):
 
 
 def filter_signal(signal, h, compensate_delay=True):
-    """
-    Filtruj sygnał wg wzoru (3) z zadania - splot.
-    
-    Parametry:
-    - signal: sygnał wejściowy
-    - h: współczynniki filtru
-    - compensate_delay: czy kompensować przesunięcie (True = wyrównanie do oryginalnego)
-    
-    ✅ Domyślnie sygnał filtrowany zaczyna się w tym samym punkcie co oryginalny
-    """
     if compensate_delay:
-        # Zwróć splot o tej samej długości co sygnał wejściowy (mode='same')
         return convolution(h, signal, mode='same')
     else:
-        # Zwróć pełny splot
         return convolution(h, signal, mode='full')
 
 
 def design_filter(M, K, window_type='rectangular', filter_type='lowpass'):
-    """
-    Zaprojektuj filtr FIR wg metody okna.
-    
-    Parametry:
-    - M: rząd filtru (musi być nieparzysty)
-    - K: parametr częstości odcięcia (f_o = f_p / K)
-    - window_type: typ okna ('rectangular', 'hamming', 'hanning', 'blackman')
-    - filter_type: typ filtru ('lowpass', 'bandpass', 'highpass')
-    """
     h = lowpass_filter_coefficients(M, K)
 
     h = apply_window(h, window_type)
@@ -166,7 +109,6 @@ def design_filter(M, K, window_type='rectangular', filter_type='lowpass'):
 
 
 def show_filter_comparison(original, filtered, h):
-    """Wyświetl porównanie sygnału oryginalnego i przefiltrowanego"""
     fig, axes = plt.subplots(3, 1, figsize=(12, 9))
 
     axes[0].plot(original, 'b-', label='Sygnał oryginalny')
@@ -190,18 +132,7 @@ def show_filter_comparison(original, filtered, h):
     plt.tight_layout()
     plt.show()
 
-
-# ============================================================================
-# CZĘŚĆ DODATKOWA: KORELACJA SYGNAŁÓW (wymagane wg zadania str. 10-13)
-# ============================================================================
-
 def correlation_direct(h, x):
-    """
-    Korelacja wzajemna - implementacja bezpośrednia.
-
-    Wynik ma długość M+N-1.
-    Indeksy są przeindeksowane do zakresu 0..M+N-2.
-    """
 
     M = len(h)
     N = len(x)
@@ -226,12 +157,6 @@ def correlation_direct(h, x):
 
 
 def correlation_using_convolution(h, x):
-    """
-    Korelacja wzajemna - implementacja z użyciem splotu wg wzoru (2).
-    Korelacja: R_hx = splot(h, odwrócone_x)
-    
-    Zwraca sygnał o długości M+N-1, zindeksowany od 0.
-    """
     M = len(h)
     N = len(x)
     
@@ -243,15 +168,6 @@ def correlation_using_convolution(h, x):
 
 
 def cross_correlation(signal1, signal2, method='direct'):
-    """
-    Oblicz korelację wzajemną dwóch sygnałów.
-    
-    Parametry:
-    - signal1, signal2: sygnały wejściowe
-    - method: 'direct' lub 'convolution'
-    
-    Zwraca: korelacja wzajemna (indeksowana od 0)
-    """
     if method == 'direct':
         return correlation_direct(signal1, signal2)
     elif method == 'convolution':
@@ -260,10 +176,28 @@ def cross_correlation(signal1, signal2, method='direct'):
         raise ValueError(f"Nieznana metoda: {method}")
 
 
-def find_delay(correlation_result):
-    global_max_idx = np.argmax(np.abs(correlation_result))
-        
-    return global_max_idx
+def default_radar_search_window(num_samples, sampling_rate):
+    window = int(round(0.04 * sampling_rate))
+    window = max(10, window)
+    window = min(window, max(1, num_samples // 20))
+    return window
+
+
+def find_delay(correlation_result, reference_length, search_window=None):
+    zero_lag = reference_length - 1
+    if search_window is None:
+        lo, hi = 0, len(correlation_result)
+    else:
+        w = int(search_window)
+        lo = max(0, zero_lag - w)
+        hi = min(len(correlation_result), zero_lag + w + 1)
+
+    segment = correlation_result[lo:hi]
+    if len(segment) == 0:
+        return 0
+
+    peak_idx = lo + int(np.argmax(np.abs(segment)))
+    return abs(peak_idx - zero_lag)
 
 
 def radar_distance_measurement(
@@ -271,19 +205,16 @@ def radar_distance_measurement(
         reflected_signal,
         sampling_rate,
         signal_speed,
-        method='direct'
-):
-    """
-    Pomiar odległości metodą korelacyjną.
-    """
-
+        method='direct',
+        search_window=None):
+    
     corr = cross_correlation(
         probe_signal,
         reflected_signal,
         method=method
     )
 
-    delay_samples = find_delay(corr)
+    delay_samples = find_delay(corr, len(probe_signal), search_window=search_window)
 
     delay_time = delay_samples / sampling_rate
 
@@ -292,8 +223,8 @@ def radar_distance_measurement(
     return distance, delay_time, delay_samples, corr
 
 
-def show_correlation_analysis(signal1, signal2, correlation, title="Korelacja sygnałów"):
-    """Wyświetl analizę korelacji"""
+def show_correlation_analysis(signal1, signal2, correlation, title="Korelacja sygnałów",
+                              search_window=None):
     fig, axes = plt.subplots(3, 1, figsize=(12, 9))
 
     axes[0].plot(signal1, 'b-', label='Sygnał 1 (sondujący)')
@@ -309,7 +240,19 @@ def show_correlation_analysis(signal1, signal2, correlation, title="Korelacja sy
     axes[1].legend()
 
     axes[2].plot(correlation, 'r-', linewidth=1.5)
-    axes[2].axvline(x=np.argmax(np.abs(correlation)), color='k', linestyle='--', label='Maksimum')
+    ref_len = len(signal1)
+    delay_samples = find_delay(correlation, ref_len, search_window=search_window)
+    peak_idx = (ref_len - 1) + delay_samples
+    if search_window is not None:
+        peak_idx = min(max(0, peak_idx), len(correlation) - 1)
+        zero_lag = ref_len - 1
+        lo = max(0, zero_lag - int(search_window))
+        hi = min(len(correlation), zero_lag + int(search_window) + 1)
+        peak_idx = lo + int(np.argmax(np.abs(correlation[lo:hi])))
+    else:
+        peak_idx = int(np.argmax(np.abs(correlation)))
+    axes[2].axvline(x=peak_idx, color='k', linestyle='--',
+                    label=f'Maksimum (opóźnienie {delay_samples} próbek)')
     axes[2].set_ylabel('Korelacja')
     axes[2].set_xlabel('Opóźnienie (próbki)')
     axes[2].set_title(title)

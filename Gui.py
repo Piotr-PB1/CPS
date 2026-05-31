@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import copy
 from Filters import (convolution, design_filter, filter_signal, show_filter_comparison,
-                     cross_correlation, radar_distance_measurement, show_correlation_analysis, find_delay)
+                     cross_correlation, radar_distance_measurement, show_correlation_analysis,
+                     default_radar_search_window)
 from Generators import create_signal, quantize_signal, extrapolate_signal
 
 SYGNALY = [
@@ -41,12 +42,66 @@ PARAM_LABELS = ['A', 'T', 't1', 'd', 'kw', 'ts', 'ns', 'n1', 'p']
 list_of_signals = []
 signal_frames = []
 
-# ===================================================
-# POMOCNICZE DO BUDOWANIA NAZWY SYGNAŁU Z PARAMETRÓW
-# ===================================================
+
+def do_math(sig1_idx, sig2_idx, operation):
+    #'dodawanie', 'odejmowanie', 'mnozenie', 'dzielenie'
+    if sig1_idx < 0 or sig2_idx < 0:
+        messagebox.showerror("Błąd", "Wybierz oba sygnały!")
+        return
+    if not operation:
+        messagebox.showerror("Błąd", "Wybierz operację!")
+        return
+
+    signal1 = list_of_signals[sig1_idx]
+    signal2 = list_of_signals[sig2_idx]
+
+    if not sg._same_sampling(signal1, signal2):
+        messagebox.showerror(
+            "Błąd",
+            "Sygnały muszą mieć takie samo próbkowanie (tę samą częstotliwość próbkowania)."
+        )
+        return
+
+    op_labels = {
+        'dodawanie': ('+', 'Dodawanie'),
+        'odejmowanie': ('-', 'Odejmowanie'),
+        'mnozenie': ('*', 'Mnożenie'),
+        'dzielenie': ('/', 'Dzielenie'),
+    }
+    if operation not in op_labels:
+        messagebox.showerror("Błąd", f"Nieznana operacja: {operation}")
+        return
+
+    try:
+        t_common, result, fs = sg.apply_arithmetic_operation(signal1, signal2, operation)
+        sym, label = op_labels[operation]
+        text = f"[{label}: {signal1.info_text or 'Sig1'} {sym} {signal2.info_text or 'Sig2'}]"
+
+        result_obj = sg.Signal.from_array(t_common, result, sampling=fs)
+        result_obj.t1 = float(t_common[0])
+        result_obj.d = float(t_common[-1] - t_common[0]) if len(t_common) > 1 else 0.0
+        result_obj.info_text = text
+        list_of_signals.append(result_obj)
+        update_signals_display()
+        messagebox.showinfo(
+            "Sukces",
+            f"{label} wykonane.\n"
+            f"Zakres wyniku: t ∈ [{t_common[0]:.4g}, {t_common[-1]:.4g}] s\n"
+            f"Liczba próbek: {len(result)}"
+        )
+    except ValueError as e:
+        if str(e) == "SAME_SAMPLING":
+            messagebox.showerror(
+                "Błąd",
+                "Sygnały muszą mieć takie samo próbkowanie (tę samą częstotliwość próbkowania)."
+            )
+        else:
+            messagebox.showerror("Błąd", str(e))
+    except Exception as e:
+        messagebox.showerror("Błąd", f"Błąd operacji: {str(e)}")
+
 
 def get_signal_type_index(sig):
-    """Zwraca indeks typu sygnału (0..10) na podstawie nazwy klasy lub atrybutu signal_type."""
     class_name = sig.__class__.__name__
     mapping = {
         'S1': 0, 'S2': 1, 'S3': 2, 'S4': 3, 'S5': 4,
@@ -59,7 +114,6 @@ def get_signal_type_index(sig):
     return -1
 
 def build_info_from_signal(sig):
-    """Tworzy opis sygnału: typ i parametry (na podstawie atrybutów obiektu)."""
     idx = get_signal_type_index(sig)
     if idx < 0 or idx >= len(SYGNALY):
         sig_name = "Nieznany"
@@ -83,10 +137,6 @@ def build_info_from_signal(sig):
     parts.append(f"sampling={sig.sampling:.0f}")
     return " ".join(parts)
 
-# ============================================================================
-# OPERACJE NA SYGNAŁACH - Zapis/Wczytywanie/Kwantyzacja/Ekstrapolacja
-# ============================================================================
-
 def signal_params_window(signal, parent):
     window = tk.Toplevel(parent)
     window.title("Parametry sygnału")
@@ -100,141 +150,95 @@ def signal_params_window(signal, parent):
         f"Moc sygnału: {signal.power():.2f}"
     ]
 
-    for i, text in enumerate(params):
-        label = tk.Label(window, text=text, font=("Arial", 11), anchor="w")
-        label.grid(row=i, column=0, padx=10, pady=8, sticky="w")
-
-    close_button = tk.Button(window, text="Zamknij", command=window.destroy)
-    close_button.grid(row=len(params), column=0, pady=15)
+    for param in params:
+        tk.Label(window, text=param, justify=tk.LEFT).pack(fill=tk.X, padx=10, pady=5)
 
 def save_signal_bin(idx):
-    """Zapisz sygnał do pliku binarnego"""
     try:
-        if idx < 0 or idx >= len(list_of_signals):
-            return
-        file = filedialog.asksaveasfilename(
-            defaultextension=".bin",
-            filetypes=[("Signal files", "*.bin"), ("All files", "*.*")]
-        )
-        if file:
-            list_of_signals[idx].save_to_bin(file)
-            messagebox.showinfo("Sukces", f"Sygnał zapisany do:\n{file}")
+        filename = filedialog.asksaveasfilename(defaultextension=".bin", 
+                                                filetypes=[("Binary", "*.bin"), ("All", "*.*")])
+        if filename:
+            list_of_signals[idx].save_to_bin(filename)
+            messagebox.showinfo("Sukces", f"Sygnał zapisany do {filename}")
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd zapisu: {str(e)}")
 
 def save_signal_txt(idx):
-    """Zapisz sygnał do pliku tekstowego"""
     try:
-        if idx < 0 or idx >= len(list_of_signals):
-            return
-        file = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-        )
-        if file:
-            list_of_signals[idx].save_to_txt(file)
-            messagebox.showinfo("Sukces", f"Sygnał zapisany do:\n{file}")
+        filename = filedialog.asksaveasfilename(defaultextension=".txt", 
+                                                filetypes=[("Text", "*.txt"), ("All", "*.*")])
+        if filename:
+            list_of_signals[idx].save_to_txt(filename)
+            messagebox.showinfo("Sukces", f"Sygnał zapisany do {filename}")
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd zapisu: {str(e)}")
 
 def load_signal():
-    """Wczytaj sygnał z pliku i nadaj mu opis z parametrami."""
     try:
-        file = filedialog.askopenfilename(
-            filetypes=[("Signal files", "*.bin"), ("Text files", "*.txt"), ("All files", "*.*")]
-        )
-        if file:
-            if file.endswith('.bin'):
-                sig = sg.Signal.load_from_bin(file)
+        filename = filedialog.askopenfilename(filetypes=[("Binary", "*.bin"), ("Text", "*.txt"), ("All", "*.*")])
+        if filename:
+            if filename.endswith('.bin'):
+                sig = sg.Signal.load_from_bin(filename)
             else:
-                sig = sg.Signal.load_from_txt(file)
-            
+                sig = sg.Signal.load_from_txt(filename)
             sig.info_text = build_info_from_signal(sig)
             list_of_signals.append(sig)
             update_signals_display()
-            messagebox.showinfo("Sukces", f"Sygnał wczytany z:\n{file}")
+            messagebox.showinfo("Sukces", f"Sygnał wczytany z {filename}")
     except Exception as e:
-        messagebox.showerror("Błąd", f"Błąd wczytywania: {str(e)}")
+        messagebox.showerror("Błąd", f"Błąd odczytu: {str(e)}")
 
 def quantize_signal_dialog(idx):
-    """Dialog dla kwantyzacji"""
-    try:
-        if idx < 0 or idx >= len(list_of_signals):
-            return
-        dialog = tk.Toplevel(root)
-        dialog.title("Kwantyzacja")
-        dialog.geometry("300x150")
-        tk.Label(dialog, text="Liczba bitów (1-32):").pack(pady=5)
-        bits_entry = tk.Entry(dialog, width=15)
-        bits_entry.insert(0, "8")
-        bits_entry.pack(pady=5)
-        
-        def apply_quantize():
-            try:
-                bits = int(bits_entry.get())
-                sig = list_of_signals[idx]
-                sig_quant = quantize_signal(sig, bits)
-                sig_quant.info_text = build_info_from_signal(sig_quant) + " [skwantowany]"
-                list_of_signals.append(sig_quant)
-                update_signals_display()
-                dialog.destroy()
-                messagebox.showinfo("Sukces", f"Sygnał kwantyzowany na {bits} bitów!")
-            except ValueError as e:
-                messagebox.showerror("Błąd", f"Błędna wartość: {str(e)}")
-        tk.Button(dialog, text="Zastosuj kwantyzację", command=apply_quantize, 
-                 bg='lightgreen', width=30).pack(pady=10)
-    except Exception as e:
-        messagebox.showerror("Błąd", f"Błąd kwantyzacji: {str(e)}")
+    def apply_quantization():
+        try:
+            bits = int(bits_entry.get())
+            quantized = quantize_signal(list_of_signals[idx], bits)
+            quantized.info_text = build_info_from_signal(quantized) + f" [Kwantyzacja: {bits}b]"
+            list_of_signals.append(quantized)
+            update_signals_display()
+            messagebox.showinfo("Sukces", f"Sygnał skwantyzowany na {bits} bitów")
+            quant_window.destroy()
+        except ValueError as e:
+            messagebox.showerror("Błąd", f"Błąd: {str(e)}")
+
+    quant_window = tk.Toplevel()
+    quant_window.title("Kwantyzacja sygnału")
+    tk.Label(quant_window, text="Liczba bitów (1-32):").pack(padx=10, pady=5)
+    bits_entry = tk.Entry(quant_window, width=10)
+    bits_entry.insert(0, "8")
+    bits_entry.pack(padx=10, pady=5)
+    tk.Button(quant_window, text="Zastosuj", command=apply_quantization, bg='lightgreen').pack(padx=10, pady=10)
 
 def extrapolate_signal_dialog(idx):
-    """Dialog dla ekstrapolacji"""
+    def apply_extrapolation():
+        try:
+            method = method_var.get()
+            range_sinc = int(range_entry.get()) if method == "sinc" else 1
+            extrapolated = extrapolate_signal(list_of_signals[idx], method, range_sinc)
+            extrapolated.info_text = build_info_from_signal(extrapolated)
+            list_of_signals.append(extrapolated)
+            update_signals_display()
+            messagebox.showinfo("Sukces", f"Sygnał ekstrapolowany metodą: {method}")
+            extrap_window.destroy()
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Błąd: {str(e)}")
+
+    extrap_window = tk.Toplevel()
+    extrap_window.title("Ekstrapolacja sygnału")
+    tk.Label(extrap_window, text="Metoda:").pack(padx=10, pady=5)
+    method_var = tk.StringVar(value="zero")
+    tk.Radiobutton(extrap_window, text="Zero padding", variable=method_var, value="zero").pack()
+    tk.Radiobutton(extrap_window, text="Sinc interpolation", variable=method_var, value="sinc").pack()
+    tk.Label(extrap_window, text="Zasięg sinc (jeśli wybrany):").pack(padx=10, pady=5)
+    range_entry = tk.Entry(extrap_window, width=10)
+    range_entry.insert(0, "1")
+    range_entry.pack(padx=10, pady=5)
+    tk.Button(extrap_window, text="Zastosuj", command=apply_extrapolation, bg='lightgreen').pack(padx=10, pady=10)
+
+def perform_convolution(sig1_idx, sig2_idx):
     try:
-        if idx < 0 or idx >= len(list_of_signals):
-            return
-        dialog = tk.Toplevel(root)
-        dialog.title("Ekstrapolacja")
-        dialog.geometry("300x200")
-        tk.Label(dialog, text="Metoda ekstrapolacji:").pack(pady=5)
-        method_var = tk.StringVar(value='zero')
-        tk.Radiobutton(dialog, text="Zero padding", variable=method_var, 
-                      value='zero').pack(anchor=tk.W, padx=20)
-        tk.Radiobutton(dialog, text="Sinc", variable=method_var, 
-                      value='sinc').pack(anchor=tk.W, padx=20)
-        tk.Label(dialog, text="Zasięg sinc (dla metody sinc):").pack(pady=5)
-        range_entry = tk.Entry(dialog, width=15)
-        range_entry.insert(0, "1")
-        range_entry.pack(pady=5)
-        
-        def apply_extrapolate():
-            try:
-                method = method_var.get()
-                range_sinc = int(range_entry.get()) if method == 'sinc' else 1
-                sig = list_of_signals[idx]
-                sig_ext = extrapolate_signal(sig, method, range_sinc)
-                sig_ext.info_text = build_info_from_signal(sig_ext) + f" [ekstrapolowany {method}]"
-                list_of_signals.append(sig_ext)
-                update_signals_display()
-                dialog.destroy()
-                messagebox.showinfo("Sukces", f"Sygnał ekstrapolowany metodą '{method}'!")
-            except ValueError as e:
-                messagebox.showerror("Błąd", f"Błędna wartość: {str(e)}")
-        tk.Button(dialog, text="Zastosuj ekstrapolację", command=apply_extrapolate, 
-                 bg='lightblue', width=30).pack(pady=10)
-    except Exception as e:
-        messagebox.showerror("Błąd", f"Błąd ekstrapolacji: {str(e)}")
-
-# ===========================================================================
-# SPLOT
-# ==========================================================================
-
-def perform_convolution(s1, s2):
-    """Wykonaj splot dwóch wybranych sygnałów"""
-    try:
-        sig1_idx = s1
-        sig2_idx = s2
-
         if sig1_idx < 0 or sig2_idx < 0:
-            messagebox.showerror("Błąd", "Wybierz oba sygnały do splotu!")
+            messagebox.showerror("Błąd", "Wybierz oba sygnały!")
             return
 
         sig1 = list_of_signals[sig1_idx]
@@ -243,107 +247,83 @@ def perform_convolution(s1, s2):
         sig1._ensure_signal()
         sig2._ensure_signal()
 
-        result = convolution(sig1.signal, sig2.signal)
+        result = convolution(sig1.signal, sig2.signal, mode='full')
+
+        if abs(sig1.sampling - sig2.sampling) > 1e-9:
+            messagebox.showerror("Błąd", "Sygnały muszą mieć tę samą częstotliwość próbkowania!")
+            return
+
+        t1 = sig1.t[0] if sig1.t is not None else sig1.t1
+        t2 = sig2.t[0] if sig2.t is not None else sig2.t1
+        t_result = t1 + t2 + np.arange(len(result), dtype=float) / sig1.sampling
 
         result_obj = sg.Signal.from_array(
-            np.arange(len(result)),
+            t_result,
             result,
-            sampling=1.0
+            sampling=sig1.sampling
         )
-        result_obj.info_text = f" [Splot: {sig1.info_text or 'Sig1'} * {sig2.info_text or 'Sig2'}]"
+        result_obj.info_text = f"[Splot: {sig1.info_text or 'Sig1'} * {sig2.info_text or 'Sig2'}]"
         
         list_of_signals.append(result_obj)
         update_signals_display()
 
-        messagebox.showinfo("Sukces", f"Splot wykonany!\nDługość wyniku: {len(result)}")
+        messagebox.showinfo("Sukces", f"Splot obliczony!\nDługość wyniku: {len(result)}")
 
     except Exception as e:
-        messagebox.showerror("Błąd", f"Błąd podczas splotu: {str(e)}")
-
-# ============================================================================
-# FILTRACJA
-# ============================================================================
+        messagebox.showerror("Błąd", f"Błąd podczas obliczania splotu: {str(e)}")
 
 def design_and_apply_filter():
-    """Zaprojektuj i zastosuj filtr do wybranego sygnału"""
     try:
-        signal_idx = filter_signal_combo.current()
-        filter_type = filter_type_var.get()
-        M = int(filter_order_entry.get())
-        K = int(filter_cutoff_entry.get())
-        window_type = filter_window_var.get()
-
-        if signal_idx < 0:
+        sig_idx = filter_signal_combo.current()
+        if sig_idx < 0:
             messagebox.showerror("Błąd", "Wybierz sygnał do filtracji!")
             return
 
-        if M % 2 == 0 or M < 1:
-            messagebox.showerror("Błąd", "Rząd filtru M musi być liczbą nieparzystą!")
-            return
+        M = int(filter_order_entry.get())
+        K = int(filter_cutoff_entry.get())
+        window_type = filter_window_var.get()
+        filter_type = filter_type_var.get()
 
-        if K < 1:
-            messagebox.showerror("Błąd", "Parametr K musi być większy od 0!")
+        if M % 2 == 0:
+            messagebox.showerror("Błąd", "Rząd filtru M musi być nieparzysty!")
             return
-
-        signal = list_of_signals[signal_idx]
-        signal._ensure_signal()
-        signal_data = signal.signal
 
         h = design_filter(M, K, window_type=window_type, filter_type=filter_type)
-        filtered_signal = filter_signal(signal_data, h, compensate_delay=True)
 
-        t_filtered = signal.t if (signal.t is not None and len(signal.t) == len(filtered_signal)) else (signal.t1 + np.arange(len(filtered_signal)) / signal.sampling)
-        filtered_obj = sg.Signal.from_array(
-            t_filtered,
-            filtered_signal,
-            t1=signal.t1,
-            sampling=signal.sampling,
-            discrete_signal=signal.discrete_signal
+        sig = list_of_signals[sig_idx]
+        sig._ensure_signal()
+        
+        filtered = filter_signal(sig.signal, h, compensate_delay=True)
+
+        result_obj = sg.Signal.from_array(
+            sig.t if sig.t is not None else np.arange(len(filtered)),
+            filtered,
+            sampling=sig.sampling
         )
-
-        filter_names = {
-            'bandpass': 'środkowoprzepustowy (F1)'
-        }
-        window_names = {
-            'rectangular': 'Prostokątne',
-            'hamming': 'Hamming (O1)'
-        }
+        result_obj.info_text = f"[{filter_type.upper()} M={M} K={K} {window_type}]"
         
-        filter_name = filter_names.get(filter_type, filter_type)
-        window_name = window_names.get(window_type, window_type)
-        
-        filtered_obj.info_text = f" [Filtr {filter_name}: M={M}, K={K}, okno={window_name}]"
-
-        list_of_signals.append(filtered_obj)
+        list_of_signals.append(result_obj)
         update_signals_display()
 
-        messagebox.showinfo("Sukces", f"Sygnał przefiltrowany dodany do listy!\n"
-                          f"Typ filtru: {filter_name}\n"
-                          f"Rząd filtru: M={M}\n"
-                          f"Częstość odcięcia: fp/{K}\n"
-                          f"Okno: {window_name}")
+        show_filter_comparison(sig.signal, filtered, h)
 
-        show_filter_comparison(signal_data, filtered_signal, h)
+        messagebox.showinfo("Sukces", f"Filtr zastosowany!\nDługość wyniku: {len(filtered)}")
 
     except ValueError as e:
-        messagebox.showerror("Błąd", f"Błędne wartości: {str(e)}")
+        messagebox.showerror("Błąd", f"Błędna wartość: {str(e)}")
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas filtracji: {str(e)}")
 
-# ============================================================================
-# KORELACJA I SENSOR RADAROWY
-# ============================================================================
-
 def compute_correlation():
-    """Oblicz korelację dwóch wybranych sygnałów"""
     try:
         sig1_idx = corr_signal1_combo.current()
         sig2_idx = corr_signal2_combo.current()
-        method = corr_method_var.get()
-
+        
         if sig1_idx < 0 or sig2_idx < 0:
-            messagebox.showerror("Błąd", "Wybierz oba sygnały do korelacji!")
+            messagebox.showerror("Błąd", "Wybierz oba sygnały!")
             return
+
+        method = corr_method_var.get()
 
         sig1 = list_of_signals[sig1_idx]
         sig2 = list_of_signals[sig2_idx]
@@ -353,10 +333,13 @@ def compute_correlation():
 
         result = cross_correlation(sig1.signal, sig2.signal, method=method)
 
+        fs = sig1.sampling if abs(sig1.sampling - sig2.sampling) < 1e-9 else 1.0
+        t_result = (sig1.t1 - sig2.t1) + (np.arange(len(result)) - (len(sig1.signal) - 1)) / fs
+
         result_obj = sg.Signal.from_array(
-            np.arange(len(result)),
+            t_result,
             result,
-            sampling=1.0
+            sampling=fs
         )
         result_obj.info_text = f" [Korelacja: {sig1.info_text or 'Sig1'} x {sig2.info_text or 'Sig2'}]"
         
@@ -378,64 +361,129 @@ def compute_correlation():
 def simulate_radar():
     try:
         probe_idx = radar_probe_combo.current()
-        sampling_rate = float(radar_sampling_entry.get())
+        reflected_idx = radar_reflected_combo.current()
         signal_speed = float(radar_speed_entry.get())
-        delay_seconds = float(radar_delay_entry.get())
+
+        use_delay = reflected_idx < 0
 
         if probe_idx < 0:
             messagebox.showerror("Błąd", "Wybierz sygnał sondujący!")
             return
-        if delay_seconds < 0:
-            messagebox.showerror("Błąd", "Opóźnienie nie może być ujemne!")
+
+        if signal_speed <= 0:
+            messagebox.showerror("Błąd", "Prędkość sygnału musi być dodatnia!")
             return
 
         probe_sig = list_of_signals[probe_idx]
         probe_sig._ensure_signal()
-        probe_data = probe_sig.signal
-        
-        delay_samples = int(round(delay_seconds * sampling_rate))
 
-        reflected_data = np.zeros_like(probe_data)
-        if delay_samples < len(probe_data):
-            reflected_data[delay_samples:] = probe_data[:len(probe_data) - delay_samples]
+        radar_search_window = None
+        alignment_note = ""
+        reflected_label = ""
+
+        if use_delay:
+            delay_seconds = float(radar_delay_entry.get())
+            if delay_seconds <= 0:
+                messagebox.showerror("Błąd", "Opóźnienie musi być dodatnie!")
+                return
+
+            actual_sampling = float(probe_sig.sampling)
+            probe_data = probe_sig.signal.astype(float)
+            delay_samples = int(round(delay_seconds * actual_sampling))
+            reflected_data = np.zeros_like(probe_data)
+
+            if delay_samples < len(probe_data):
+                reflected_data[delay_samples:] = probe_data[:len(probe_data) - delay_samples]
+            else:
+                messagebox.showwarning("Ostrzeżenie",
+                    f"Opóźnienie ({delay_seconds:.4f} s) jest większe niż czas trwania sygnału!\n"
+                    "Wynik może być niejednoznaczny.")
+                reflected_data = np.concatenate(
+                    [np.zeros(delay_samples), probe_data])[:len(probe_data)]
+
+            reflected_label = (f"WYGENEROWANY z opóźnieniem {delay_seconds:.4f} s "
+                               f"({delay_samples} próbek)")
+            alignment_note = "Symulacja echa na wspólnej osi czasu (pełne okno korelacji)."
+
         else:
-            messagebox.showwarning("Ostrzeżenie", "Opóźnienie jest większe niż czas trwania sygnału! Wynik może być niejednoznaczny.")
-            reflected_data = np.concatenate([np.zeros(delay_samples), probe_data])[:len(probe_data)]
+            reflected_sig = list_of_signals[reflected_idx]
+            reflected_sig._ensure_signal()
 
-        corr = cross_correlation(probe_data, reflected_data, method='direct')
-        
-        zero_index = len(probe_data) - 1
-        
-        positive_part = corr[zero_index:]
-        detected_shift = np.argmax(np.abs(positive_part))
-        
-        detected_delay_time = detected_shift / sampling_rate
-        distance = (signal_speed * detected_delay_time) / 2
+            if not sg._same_sampling(probe_sig, reflected_sig):
+                messagebox.showerror(
+                    "Błąd",
+                    "Sygnały muszą mieć takie samo próbkowanie (tę samą częstotliwość próbkowania)."
+                )
+                return
 
-        show_correlation_analysis(probe_data, reflected_data, corr, title="Korelacja sygnałów radarowych")
+            _, probe_data, reflected_data, actual_sampling = sg.align_signals(
+                probe_sig, reflected_sig, mode='union'
+            )
 
-        result_text = f"""Wyniki pomiaru radarowego:
+            probe_t1 = (float(probe_sig.t[0])
+                        if probe_sig.t is not None and len(probe_sig.t) > 0
+                        else float(probe_sig.t1))
+            refl_t1 = (float(reflected_sig.t[0])
+                       if reflected_sig.t is not None and len(reflected_sig.t) > 0
+                       else float(reflected_sig.t1))
+            t1_diff = refl_t1 - probe_t1
 
-Zadane opóźnienie: {delay_seconds} s
-Wykryte opóźnienie: {detected_delay_time:.6f} s (próbki: {detected_shift})
-Odległość: {distance:.2f} j.u.
+            radar_search_window = default_radar_search_window(len(probe_data), actual_sampling)
+            reflected_label = list_of_signals[reflected_idx].info_text or "Sygnał zwrotny"
+            alignment_note = (
+                f"Sygnały wyrównane wg czasu absolutnego (różnica t1 = {t1_diff:.4f} s).\n"
+                f"Szukane jest tylko dodatkowe opóźnienie echa (okno ±{radar_search_window} próbek).\n"
+                "Różnica t1 nie jest traktowana jako odległość radaru."
+            )
 
-Parametry:
-- Częstość próbkowania: {sampling_rate} Hz
-- Prędkość sygnału: {signal_speed} j.u./s"""
-        messagebox.showinfo("Wynik pomiaru", result_text)
+        distance, detected_delay_time, detected_shift, corr = radar_distance_measurement(
+            probe_data,
+            reflected_data,
+            actual_sampling,
+            signal_speed,
+            method='direct',
+            search_window=radar_search_window
+        )
+
+        show_correlation_analysis(
+            probe_data, reflected_data, corr,
+            title="Korelacja sygnałów radarowych (Sensor radarowy)",
+            search_window=radar_search_window
+        )
+
+        periodic_warning = ""
+        if (not use_delay and detected_shift == 0 and detected_delay_time == 0):
+            periodic_warning = (
+                "\n\nUwaga: Dla sygnałów okresowych (np. sinus) o tym samym kształcie "
+                "i różnym t1 pomiar 0 jest prawidłowy — to nie jest błąd echa, tylko "
+                "wyrównanie faz/czasu. Aby zmierzyć echo, użyj pola opóźnienia lub sygnału "
+                "niesinusoidalnego (skok, impuls)."
+            )
+
+        result_text = (
+            f"Wyniki pomiaru SENSORA RADAROWEGO:\n\n"
+            f"Sygnał sondujący: {list_of_signals[probe_idx].info_text}\n"
+            f"Sygnał zwrotny:   {reflected_label}\n\n"
+            f"{alignment_note}\n\n"
+            f"Wykryte opóźnienie echa: {detected_delay_time:.6f} s\n"
+            f"Przesunięcie:            {detected_shift} próbek\n"
+            f"Zmierzona odległość:      {distance:.4f} j.u."
+            f"{periodic_warning}\n\n"
+            f"Parametry:\n"
+            f"  Częstość próbkowania: {actual_sampling:.0f} Hz\n"
+            f"  Prędkość sygnału:     {signal_speed} j.u./s\n"
+            f"  Długość sygnału:      {len(probe_data)} próbek\n"
+            f"  Długość korelacji:    {len(corr)} próbek"
+        )
+
+        messagebox.showinfo("Wynik pomiaru SENSORA RADAROWEGO", result_text)
 
     except ValueError as e:
         messagebox.showerror("Błąd", f"Błędna wartość: {str(e)}")
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas pomiaru: {str(e)}")
 
-# ============================================================================
-# GENEROWANIE SYGNAŁÓW
-# ============================================================================
-
 def update_field_visibility():
-    """Aktualizuj widoczność pól w zależności od typu sygnału"""
     signal_type = signal_type_combo.current()
     if signal_type < 0:
         return
@@ -459,7 +507,6 @@ def update_field_visibility():
             label.config(fg='gray')
 
 def generate_signal():
-    """Wygeneruj nowy sygnał"""
     try:
         signal_type = signal_type_combo.current()
         if signal_type < 0:
@@ -489,7 +536,6 @@ def generate_signal():
         messagebox.showerror("Błąd", f"Błąd podczas generacji: {str(e)}")
 
 def update_signals_display():
-    """Odśwież listę sygnałów"""
     for frame in signal_frames:
         frame.destroy()
     signal_frames.clear()
@@ -526,11 +572,10 @@ def update_signals_display():
 
     signal_list = [f"{i+1}. {s.info_text or type(s).__str__}" for i, s in enumerate(list_of_signals)]
     for combo in [filter_signal_combo, corr_signal1_combo, corr_signal2_combo, 
-                  radar_probe_combo, radar_reflected_combo, splot_signal1_combo, splot_signal2_combo]:
+                  radar_probe_combo, radar_reflected_combo, splot_signal1_combo, splot_signal2_combo, operation_signal1_combo, operation_signal2_combo]:
         combo['values'] = signal_list
 
 def show_signal_plot(idx):
-    """Pokaż wykres sygnału"""
     if 0 <= idx < len(list_of_signals):
         sig = list_of_signals[idx]
         sig._ensure_signal()
@@ -548,40 +593,31 @@ def show_signal_plot(idx):
         plt.show()
 
 def delete_signal(idx):
-    """Usuń sygnał"""
-    if 0 <= idx < len(list_of_signals):
-        list_of_signals.pop(idx)
-        update_signals_display()
-
-# ============================================================================
-# GŁÓWNE GUI
-# ============================================================================
+    list_of_signals.pop(idx)
+    update_signals_display()
 
 def run():
-    global root, notebook
-    global signal_type_combo, signal_A_entry, signal_T_entry, signal_t1_entry
-    global signal_d_entry, signal_kw_entry, signal_ts_entry, signal_ns_entry
-    global signal_n1_entry, signal_p_entry, signal_sampling_entry, signals_frame
-    global signal_A_label, signal_T_label, signal_t1_label, signal_d_label
-    global signal_kw_label, signal_ts_label, signal_ns_label, signal_n1_label, signal_p_label
-    global filter_signal_combo, filter_type_var, filter_order_entry, filter_cutoff_entry
-    global filter_window_var
-    global corr_signal1_combo, corr_signal2_combo, corr_method_var
+    global root, signal_type_combo, signal_A_entry, signal_T_entry, signal_t1_entry, signal_d_entry
+    global signal_kw_entry, signal_ts_entry, signal_ns_entry, signal_n1_entry, signal_p_entry
+    global signal_sampling_entry, signals_frame, filter_signal_combo, filter_type_var, filter_window_var
+    global filter_order_entry, filter_cutoff_entry, corr_signal1_combo, corr_signal2_combo, corr_method_var
     global radar_probe_combo, radar_reflected_combo, radar_sampling_entry, radar_speed_entry, radar_delay_entry
-    global splot_signal1_combo, splot_signal2_combo
+    global splot_signal1_combo, splot_signal2_combo, signal_A_label, signal_T_label, signal_t1_label
+    global signal_d_label, signal_kw_label, signal_ts_label, signal_ns_label, signal_n1_label, signal_p_label
+    global operation_signal1_combo, operation_signal2_combo
 
     root = tk.Tk()
     root.title("Cyfrowe Przetwarzanie Sygnałów - Zadanie 3")
-    root.geometry("1200x800")
+    root.geometry("1000x800")
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-    # ========== TAB 1: GENEROWANIE SYGNAŁÓW ==========
+    # ========== TAB 0: GENERACJA SYGNAŁÓW ==========
     tab_generate = ttk.Frame(notebook)
-    notebook.add(tab_generate, text="Generowanie sygnałów")
+    notebook.add(tab_generate, text="Generacja sygnałów")
 
-    params_frame = tk.LabelFrame(tab_generate, text="Parametry sygnału", padx=10, pady=10)
+    params_frame = tk.Frame(tab_generate)
     params_frame.pack(fill=tk.X, padx=5, pady=5)
 
     tk.Label(params_frame, text="Typ sygnału:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
@@ -596,7 +632,7 @@ def run():
         ("Czas trwania (d):", 'd'),
         ("Współczynnik wypełnienia (kw):", 'kw'),
         ("Czas skoku (ts):", 'ts'),
-        ("Liczba próbek (ns):", 'ns'),
+        ("Indeks impulsu (ns):", 'ns'),
         ("Indeks próbki (n1):", 'n1'),
         ("Prawdopodobieństwo (p):", 'p'),
     ]
@@ -640,6 +676,23 @@ def run():
     signals_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
     tab_generate.rowconfigure(2, weight=1)
     tab_generate.columnconfigure(1, weight=1)
+
+    # ========== TAB 1.25 operacja =======
+    tab_operation = ttk.Frame(notebook)
+    notebook.add(tab_operation, text="Operacje na sygnałach")
+    tk.Label(tab_operation, text="Sygnał 1:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+    operation_signal1_combo = ttk.Combobox(tab_operation, state='readonly', width=40)
+    operation_signal1_combo.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
+    tk.Label(tab_operation, text="Sygnał 2:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)    
+    operation_signal2_combo = ttk.Combobox(tab_operation, state='readonly', width=40)
+    operation_signal2_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
+    tk.Label(tab_operation, text="Operacja:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+    operation_var = ttk.Combobox(tab_operation, state='readonly', values=['dodawanie', 'odejmowanie', 'mnozenie', 'dzielenie'], width=20)
+    operation_var.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+
+    tk.Button(tab_operation, text="Wykonaj operację", command=lambda: do_math(
+             operation_signal1_combo.current(), operation_signal2_combo.current(), operation_var.get()), 
+             bg='lightyellow', height=2).grid(row=3, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
 
     # ========== TAB 1.5: SPLOT ==========
     tab_splot = ttk.Frame(notebook)
@@ -700,31 +753,37 @@ def run():
 
     # ========== TAB 4: SENSOR RADAROWY ==========
     tab_radar = ttk.Frame(notebook)
-    notebook.add(tab_radar, text="Sensor radarowy")
-    tk.Label(tab_radar, text="Sygnał sondujący:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_probe_combo = ttk.Combobox(tab_radar, state='readonly', width=40)
+    notebook.add(tab_radar, text="Sensor radarowy")    
+    radar_params_frame = tk.Frame(tab_radar)
+    radar_params_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    
+    tk.Label(radar_params_frame, text="Sygnał sondujący (probe):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_probe_combo = ttk.Combobox(radar_params_frame, state='readonly', width=40)
     radar_probe_combo.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
-    tk.Label(tab_radar, text="Sygnał zwrotny:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_reflected_combo = ttk.Combobox(tab_radar, state='readonly', width=40)
+    
+    tk.Label(radar_params_frame, text="Sygnał zwrotny (reflected):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_reflected_combo = ttk.Combobox(radar_params_frame, state='readonly', width=40)
     radar_reflected_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
-    tk.Label(tab_radar, text="Częstość próbkowania [Hz]:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_sampling_entry = tk.Entry(tab_radar, width=15)
-    radar_sampling_entry.insert(0, "1000")
-    radar_sampling_entry.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=5)
-    tk.Label(tab_radar, text="Prędkość sygnału [j.u./s]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_speed_entry = tk.Entry(tab_radar, width=15)
+    tk.Label(radar_params_frame,
+             text="Jeśli wybrano sygnał zwrotny, opóźnienie jest brane z różnicy t1 obu sygnałów.",
+             fg='gray', font=('Arial', 8)).grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=0)
+    
+    tk.Label(radar_params_frame, text="Prędkość sygnału [j.u./s]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_speed_entry = tk.Entry(radar_params_frame, width=15)
     radar_speed_entry.insert(0, "300000")
     radar_speed_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
-    tk.Label(tab_radar, text="Opóźnienie sygnału zwrotnego [s]:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_delay_entry = tk.Entry(tab_radar, width=15)
-    radar_delay_entry.insert(0, "0.5")
+    
+    tk.Label(radar_params_frame, text="Opóźnienie [s] (jeśli brak sygnału zwrotnego):").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_delay_entry = tk.Entry(radar_params_frame, width=15)
+    radar_delay_entry.insert(0, "0.05")
     radar_delay_entry.grid(row=4, column=1, sticky=tk.EW, padx=5, pady=5)
-    tk.Button(tab_radar, text="Pomiar odległości", command=simulate_radar,
-             bg='lightcoral', height=2).grid(row=5, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
 
-    info_label = tk.Label(root, text="Warianty: O1 (Hamming) + F1 (Bandpass) | Kompensacja przesunięcia czasowego ✓ | Zapis/Wczytywanie ✓ | Kwantyzacja ✓ | Ekstrapolacja ✓",
-                         bg='lightblue', pady=5, wraplength=1200)
-    info_label.pack(fill=tk.X)
+    radar_sampling_entry = tk.Entry(radar_params_frame, width=1)
+    radar_sampling_entry.insert(0, "1000")
+
+    tk.Button(radar_params_frame, text="Pomiar odległości SENSOREM RADAROWYM", command=simulate_radar,
+             bg='lightcoral', height=2, font=('Arial', 10, 'bold')).grid(row=5, column=0, columnspan=2,
+             sticky=tk.EW, padx=5, pady=10)
 
     root.mainloop()
 

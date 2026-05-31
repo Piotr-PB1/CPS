@@ -45,7 +45,6 @@ class Signal:
                 pass
     
     def _validate_arrays(self):
-        """Sprawdza i naprawia niezgodności między tablicami t i signal"""
         if self.signal is None or self.t is None:
             return
         
@@ -91,7 +90,6 @@ class Signal:
             f.write(struct.pack("I", n))
 
             if is_complex:
-                # zapisz n jako liczba próbek complex
                 real_imag = np.empty(data.size * 2, dtype=np.float64)
                 real_imag[0::2] = data.real.ravel()
                 real_imag[1::2] = data.imag.ravel()
@@ -310,7 +308,6 @@ class Signal:
             t_new = np.arange(num_new_samples) * T_new
             signal_out = np.zeros(num_new_samples)
 
-            # print(f"Próbka {i+1}/{num_new_samples}, t={t:.4f}")
             for i, t in enumerate(t_new):
                 t_norm = (t - self.t1) / Ts
 
@@ -381,10 +378,92 @@ class Signal:
     
     def enob(self, other):
 
-        snr = self.snr_db(other)
-        if snr == np.inf:
-            return np.inf
-        return (snr - 1.76) / 6.02
+            snr = self.snr_db(other)
+            if snr == np.inf:
+                return np.inf
+            return (snr - 1.76) / 6.02
+    
+
+def _time_axis(sig):
+    sig._ensure_signal()
+    if sig.t is not None and len(sig.t) == len(sig.signal):
+        return np.asarray(sig.t, dtype=float)
+    return sig.t1 + np.arange(len(sig.signal), dtype=float) / sig.sampling
+
+
+def _same_sampling(sig1, sig2, tol=1e-9):
+    return abs(sig1.sampling - sig2.sampling) <= tol
+
+
+def align_signals(sig1, sig2, mode='union'):
+    sig1._ensure_signal()
+    sig2._ensure_signal()
+    sig1._validate_arrays()
+    sig2._validate_arrays()
+
+    if not _same_sampling(sig1, sig2):
+        raise ValueError("SAME_SAMPLING")
+
+    fs = float(sig1.sampling)
+    t1 = _time_axis(sig1)
+    t2 = _time_axis(sig2)
+    x1 = np.asarray(sig1.signal, dtype=float)
+    x2 = np.asarray(sig2.signal, dtype=float)
+
+    t_ref = min(t1[0], t2[0])
+    idx1 = np.round((t1 - t_ref) * fs).astype(int)
+    idx2 = np.round((t2 - t_ref) * fs).astype(int)
+
+    if mode == 'union':
+        t_end = max(t1[-1], t2[-1])
+        n_total = int(np.round((t_end - t_ref) * fs)) + 1
+    elif mode == 'overlap':
+        t_start = max(t1[0], t2[0])
+        t_end = min(t1[-1], t2[-1])
+        if t_end < t_start:
+            raise ValueError("Sygnały nie mają wspólnego zakresu czasowego.")
+        t_ref = t_start
+        n_total = int(np.round((t_end - t_ref) * fs)) + 1
+        idx1 = np.round((t1 - t_ref) * fs).astype(int)
+        idx2 = np.round((t2 - t_ref) * fs).astype(int)
+    else:
+        raise ValueError(f"Nieznany tryb wyrównania: {mode}")
+
+    if n_total < 1:
+        raise ValueError("Nie można wyznaczyć wspólnej osi czasu dla tych sygnałów.")
+
+    s1 = np.zeros(n_total, dtype=float)
+    s2 = np.zeros(n_total, dtype=float)
+
+    for i, v in zip(idx1, x1):
+        if 0 <= i < n_total:
+            s1[i] = v
+    for i, v in zip(idx2, x2):
+        if 0 <= i < n_total:
+            s2[i] = v
+
+    t_common = t_ref + np.arange(n_total, dtype=float) / fs
+    return t_common, s1, s2, fs
+
+
+def apply_arithmetic_operation(sig1, sig2, operation):
+    if operation in ('dodawanie', 'odejmowanie', 'mnozenie'):
+        t_common, s1, s2, fs = align_signals(sig1, sig2, mode='union')
+        if operation == 'dodawanie':
+            result = s1 + s2
+        elif operation == 'odejmowanie':
+            result = s1 - s2
+        else:
+            result = s1 * s2
+    elif operation == 'dzielenie':
+        t_common, s1, s2, fs = align_signals(sig1, sig2, mode='union')
+        with np.errstate(divide='ignore', invalid='ignore'):
+            result = np.where(s2 != 0, s1 / s2, 0.0)
+    else:
+        raise ValueError(f"Nieznana operacja: {operation}")
+
+    return t_common, result, fs
+        
 
 # ---------------- konkretne sygnały ----------------
 
