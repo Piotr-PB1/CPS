@@ -280,7 +280,7 @@ def design_and_apply_filter():
             return
 
         M = int(filter_order_entry.get())
-        K = int(filter_cutoff_entry.get())
+        fc = float(filter_cutoff_entry.get()) 
         window_type = filter_window_var.get()
         filter_type = filter_type_var.get()
 
@@ -288,11 +288,22 @@ def design_and_apply_filter():
             messagebox.showerror("Błąd", "Rząd filtru M musi być nieparzysty!")
             return
 
-        h = design_filter(M, K, window_type=window_type, filter_type=filter_type)
-
         sig = list_of_signals[sig_idx]
         sig._ensure_signal()
         
+        nyquist_freq = sig.sampling / 2
+        if fc <= 0 or fc >= nyquist_freq:
+            messagebox.showerror(
+                "Błąd",
+                f"Częstotliwość cięcia musi być z zakresu (0, {nyquist_freq:.1f}) Hz!\n"
+                f"Dla tego sygnału fs={sig.sampling} Hz"
+            )
+            return
+        
+        K = sig.sampling / fc
+        
+        h = design_filter(M, K, window_type=window_type, filter_type=filter_type)
+
         filtered = filter_signal(sig.signal, h, compensate_delay=True)
 
         result_obj = sg.Signal.from_array(
@@ -300,14 +311,20 @@ def design_and_apply_filter():
             filtered,
             sampling=sig.sampling
         )
-        result_obj.info_text = f"[{filter_type.upper()} M={M} K={K} {window_type}]"
+        result_obj.info_text = f"[{filter_type.upper()} M={M} fc={fc:.1f}Hz {window_type}]"
         
         list_of_signals.append(result_obj)
         update_signals_display()
 
         show_filter_comparison(sig.signal, filtered, h)
 
-        messagebox.showinfo("Sukces", f"Filtr zastosowany!\nDługość wyniku: {len(filtered)}")
+        messagebox.showinfo(
+            "Sukces",
+            f"Filtr zastosowany!\n"
+            f"Częstotliwość cięcia: {fc} Hz\n"
+            f"Parametr K: {K:.2f}\n"
+            f"Długość wyniku: {len(filtered)}"
+        )
 
     except ValueError as e:
         messagebox.showerror("Błąd", f"Błędna wartość: {str(e)}")
@@ -378,8 +395,11 @@ def simulate_radar():
         probe_sig._ensure_signal()
 
         radar_search_window = None
-        alignment_note = ""
+        echo_mode = False
         reflected_label = ""
+        t1_delay_time = 0.0
+        t1_delay_samples = 0
+        t1_diff = 0.0
 
         if use_delay:
             delay_seconds = float(radar_delay_entry.get())
@@ -403,75 +423,102 @@ def simulate_radar():
 
             reflected_label = (f"WYGENEROWANY z opóźnieniem {delay_seconds:.4f} s "
                                f"({delay_samples} próbek)")
-            alignment_note = "Symulacja echa na wspólnej osi czasu (pełne okno korelacji)."
+            echo_mode = True
 
         else:
             reflected_sig = list_of_signals[reflected_idx]
             reflected_sig._ensure_signal()
 
-            if not sg._same_sampling(probe_sig, reflected_sig):
-                messagebox.showerror(
-                    "Błąd",
-                    "Sygnały muszą mieć takie samo próbkowanie (tę samą częstotliwość próbkowania)."
+            probe_t1 = sg.signal_start_time(probe_sig)
+            refl_t1 = sg.signal_start_time(reflected_sig)
+
+            try:
+                probe_data, reflected_data, actual_sampling, t1_diff, t1_delay_samples = (
+                    sg.place_reflected_on_probe_timeline(probe_sig, reflected_sig)
                 )
+            except ValueError as e:
+                if str(e) == "SAME_SAMPLING":
+                    messagebox.showerror(
+                        "Błąd",
+                        "Sygnały muszą mieć takie samo próbkowanie "
+                        "(tę samą częstotliwość próbkowania)."
+                    )
+                else:
+                    messagebox.showerror("Błąd", str(e))
                 return
 
-            _, probe_data, reflected_data, actual_sampling = sg.align_signals(
-                probe_sig, reflected_sig, mode='union'
+            if t1_diff < 0:
+                messagebox.showwarning(
+                    "Uwaga",
+                    f"Sygnał zwrotny zaczyna się wcześniej niż sondujący (Δt1 = {t1_diff:.4f} s).\n"
+                    "Przyjęto przesunięcie t1 = 0 próbek."
+                )
+                t1_diff = 0.0
+                t1_delay_samples = 0
+
+            echo_mode = True
+            radar_search_window = None
+            t1_delay_time = 0.0
+
+            reflected_label = (
+                f"{list_of_signals[reflected_idx].info_text or 'Sygnał zwrotny'}\n"
+                f"  (t1_sonda={probe_t1:.4g} s, t1_zwrotny={refl_t1:.4g} s, "
+                f"Δt1={max(0.0, t1_diff):.4g} s → {t1_delay_samples} próbek na osi sondy)"
             )
 
-            probe_t1 = (float(probe_sig.t[0])
-                        if probe_sig.t is not None and len(probe_sig.t) > 0
-                        else float(probe_sig.t1))
-            refl_t1 = (float(reflected_sig.t[0])
-                       if reflected_sig.t is not None and len(reflected_sig.t) > 0
-                       else float(reflected_sig.t1))
-            t1_diff = refl_t1 - probe_t1
-
-            radar_search_window = default_radar_search_window(len(probe_data), actual_sampling)
-            reflected_label = list_of_signals[reflected_idx].info_text or "Sygnał zwrotny"
-            alignment_note = (
-                f"Sygnały wyrównane wg czasu absolutnego (różnica t1 = {t1_diff:.4f} s).\n"
-                f"Szukane jest tylko dodatkowe opóźnienie echa (okno ±{radar_search_window} próbek).\n"
-                "Różnica t1 nie jest traktowana jako odległość radaru."
+        distance, detected_delay_time, detected_shift, corr, peak_idx, zero_lag = (
+            radar_distance_measurement(
+                probe_data,
+                reflected_data,
+                actual_sampling,
+                signal_speed,
+                method='direct',
+                search_window=radar_search_window,
+                echo_mode=echo_mode,
             )
-
-        distance, detected_delay_time, detected_shift, corr = radar_distance_measurement(
-            probe_data,
-            reflected_data,
-            actual_sampling,
-            signal_speed,
-            method='direct',
-            search_window=radar_search_window
         )
+
+        corr_delay_time = detected_delay_time
+        corr_delay_samples = detected_shift
+
+        if use_delay:
+            total_delay_time = corr_delay_time
+            total_delay_samples = corr_delay_samples
+        else:
+            total_delay_time = corr_delay_time
+            total_delay_samples = corr_delay_samples
+
+        distance = (signal_speed * total_delay_time) / 2
 
         show_correlation_analysis(
-            probe_data, reflected_data, corr,
+            probe_data,
+            reflected_data,
+            corr,
             title="Korelacja sygnałów radarowych (Sensor radarowy)",
-            search_window=radar_search_window
+            search_window=radar_search_window,
+            peak_idx=peak_idx,
+            zero_lag=zero_lag,
         )
 
-        periodic_warning = ""
-        if (not use_delay and detected_shift == 0 and detected_delay_time == 0):
-            periodic_warning = (
-                "\n\nUwaga: Dla sygnałów okresowych (np. sinus) o tym samym kształcie "
-                "i różnym t1 pomiar 0 jest prawidłowy — to nie jest błąd echa, tylko "
-                "wyrównanie faz/czasu. Aby zmierzyć echo, użyj pola opóźnienia lub sygnału "
-                "niesinusoidalnego (skok, impuls)."
+        t1_info = ""
+        if not use_delay and t1_delay_samples > 0:
+            t1_info = (
+                f"Przesunięcie z t1 na osi sondy: {max(0.0, t1_diff):.6f} s "
+                f"({t1_delay_samples} próbek) — uwzględnione w korelacji.\n\n"
             )
 
         result_text = (
             f"Wyniki pomiaru SENSORA RADAROWEGO:\n\n"
             f"Sygnał sondujący: {list_of_signals[probe_idx].info_text}\n"
             f"Sygnał zwrotny:   {reflected_label}\n\n"
-            f"{alignment_note}\n\n"
-            f"Wykryte opóźnienie echa: {detected_delay_time:.6f} s\n"
-            f"Przesunięcie:            {detected_shift} próbek\n"
-            f"Zmierzona odległość:      {distance:.4f} j.u."
-            f"{periodic_warning}\n\n"
+            f"{t1_info}"
+            f"Opóźnienie z korelacji (maksimum najbliżej środka / lagu 0):\n"
+            f"  {corr_delay_time:.6f} s  ({corr_delay_samples} próbek)\n\n"
+            f"Zmierzona odległość: {distance:.4f} km\n"
+            f"  (v × τ_korelacji / 2)\n\n"
             f"Parametry:\n"
             f"  Częstość próbkowania: {actual_sampling:.0f} Hz\n"
-            f"  Prędkość sygnału:     {signal_speed} j.u./s\n"
+            f"  Prędkość sygnału:     {signal_speed} km/s\n"
             f"  Długość sygnału:      {len(probe_data)} próbek\n"
             f"  Długość korelacji:    {len(corr)} próbek"
         )
@@ -727,9 +774,9 @@ def run():
     filter_order_entry = tk.Entry(tab_filter, width=15)
     filter_order_entry.insert(0, "25")
     filter_order_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
-    tk.Label(tab_filter, text="Parametr cięcia (K - fp/K):").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+    tk.Label(tab_filter, text="Częstotliwość cięcia [Hz]:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
     filter_cutoff_entry = tk.Entry(tab_filter, width=15)
-    filter_cutoff_entry.insert(0, "8")
+    filter_cutoff_entry.insert(0, "100")
     filter_cutoff_entry.grid(row=4, column=1, sticky=tk.EW, padx=5, pady=5)
     tk.Button(tab_filter, text="Zastosuj filtr", command=design_and_apply_filter,
              bg='lightblue', height=2).grid(row=5, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
@@ -765,10 +812,11 @@ def run():
     radar_reflected_combo = ttk.Combobox(radar_params_frame, state='readonly', width=40)
     radar_reflected_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
     tk.Label(radar_params_frame,
-             text="Jeśli wybrano sygnał zwrotny, opóźnienie jest brane z różnicy t1 obu sygnałów.",
+             text="Dwa sygnały: zwrotny jest przesuwany o Δt1=(t1_zwrotny−t1_sonda) na osi sondy, "
+                  "jak echo przy jednym sygnale. Korelacja daje τ i odległość v·τ/2.",
              fg='gray', font=('Arial', 8)).grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=0)
     
-    tk.Label(radar_params_frame, text="Prędkość sygnału [j.u./s]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+    tk.Label(radar_params_frame, text="Prędkość sygnału [km/s]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
     radar_speed_entry = tk.Entry(radar_params_frame, width=15)
     radar_speed_entry.insert(0, "300000")
     radar_speed_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)

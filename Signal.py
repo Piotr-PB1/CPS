@@ -391,6 +391,36 @@ def _time_axis(sig):
     return sig.t1 + np.arange(len(sig.signal), dtype=float) / sig.sampling
 
 
+def signal_start_time(sig):
+    sig._ensure_signal()
+    if sig.t is not None and len(sig.t) > 0:
+        return float(sig.t[0])
+    return float(sig.t1)
+
+
+def place_reflected_on_probe_timeline(probe_sig, reflected_sig):
+    probe_sig._ensure_signal()
+    reflected_sig._ensure_signal()
+
+    if not _same_sampling(probe_sig, reflected_sig):
+        raise ValueError("SAME_SAMPLING")
+
+    fs = float(probe_sig.sampling)
+    probe_data = np.asarray(probe_sig.signal, dtype=float)
+    reflected_raw = np.asarray(reflected_sig.signal, dtype=float)
+
+    t1_diff = signal_start_time(reflected_sig) - signal_start_time(probe_sig)
+    delay_samples = int(round(max(0.0, t1_diff) * fs))
+
+    n = len(probe_data)
+    reflected_data = np.zeros(n, dtype=float)
+    if delay_samples < n and len(reflected_raw) > 0:
+        copy_len = min(len(reflected_raw), n - delay_samples)
+        reflected_data[delay_samples:delay_samples + copy_len] = reflected_raw[:copy_len]
+
+    return probe_data, reflected_data, fs, t1_diff, delay_samples
+
+
 def _same_sampling(sig1, sig2, tol=1e-9):
     return abs(sig1.sampling - sig2.sampling) <= tol
 

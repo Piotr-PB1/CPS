@@ -184,20 +184,37 @@ def default_radar_search_window(num_samples, sampling_rate):
 
 
 def find_delay(correlation_result, reference_length, search_window=None):
+    corr = np.abs(np.asarray(correlation_result, dtype=float))
     zero_lag = reference_length - 1
+    n = len(corr)
+
     if search_window is None:
-        lo, hi = 0, len(correlation_result)
+        w = max(zero_lag, n - 1 - zero_lag)
     else:
         w = int(search_window)
-        lo = max(0, zero_lag - w)
-        hi = min(len(correlation_result), zero_lag + w + 1)
 
-    segment = correlation_result[lo:hi]
-    if len(segment) == 0:
-        return 0
+    lo = max(0, zero_lag - w)
+    hi = min(n, zero_lag + w + 1)
 
-    peak_idx = lo + int(np.argmax(np.abs(segment)))
-    return abs(peak_idx - zero_lag)
+    if hi - lo < 3:
+        return 0, zero_lag, zero_lag
+
+    peaks = []
+    for i in range(lo + 1, hi - 1):
+        if corr[i] >= corr[i - 1] and corr[i] > corr[i + 1]:
+            peaks.append(i)
+
+    if peaks:
+        peak_idx = min(peaks, key=lambda i: abs(i - zero_lag))
+    else:
+        segment = corr[lo:hi]
+        max_val = float(np.max(segment))
+        tol = 1e-9 * max(max_val, 1.0)
+        candidates = np.flatnonzero(segment >= max_val - tol) + lo
+        peak_idx = int(candidates[int(np.argmin(np.abs(candidates - zero_lag)))])
+
+    delay_samples = abs(peak_idx - zero_lag)
+    return delay_samples, peak_idx, zero_lag
 
 
 def radar_distance_measurement(
@@ -206,25 +223,27 @@ def radar_distance_measurement(
         sampling_rate,
         signal_speed,
         method='direct',
-        search_window=None):
-    
-    corr = cross_correlation(
-        probe_signal,
-        reflected_signal,
-        method=method
+        search_window=None,
+        echo_mode=False):
+    if echo_mode:
+        corr = cross_correlation(reflected_signal, probe_signal, method=method)
+        ref_len = len(reflected_signal)
+    else:
+        corr = cross_correlation(probe_signal, reflected_signal, method=method)
+        ref_len = len(probe_signal)
+
+    delay_samples, peak_idx, zero_lag = find_delay(
+        corr, ref_len, search_window=search_window
     )
 
-    delay_samples = find_delay(corr, len(probe_signal), search_window=search_window)
-
     delay_time = delay_samples / sampling_rate
-
     distance = (signal_speed * delay_time) / 2
 
-    return distance, delay_time, delay_samples, corr
+    return distance, delay_time, delay_samples, corr, peak_idx, zero_lag
 
 
 def show_correlation_analysis(signal1, signal2, correlation, title="Korelacja sygnałów",
-                              search_window=None):
+                              search_window=None, peak_idx=None, zero_lag=None):
     fig, axes = plt.subplots(3, 1, figsize=(12, 9))
 
     axes[0].plot(signal1, 'b-', label='Sygnał 1 (sondujący)')
@@ -241,18 +260,18 @@ def show_correlation_analysis(signal1, signal2, correlation, title="Korelacja sy
 
     axes[2].plot(correlation, 'r-', linewidth=1.5)
     ref_len = len(signal1)
-    delay_samples = find_delay(correlation, ref_len, search_window=search_window)
-    peak_idx = (ref_len - 1) + delay_samples
-    if search_window is not None:
-        peak_idx = min(max(0, peak_idx), len(correlation) - 1)
+    if zero_lag is None:
         zero_lag = ref_len - 1
-        lo = max(0, zero_lag - int(search_window))
-        hi = min(len(correlation), zero_lag + int(search_window) + 1)
-        peak_idx = lo + int(np.argmax(np.abs(correlation[lo:hi])))
+    if peak_idx is None:
+        delay_samples, peak_idx, zero_lag = find_delay(
+            correlation, ref_len, search_window=search_window
+        )
     else:
-        peak_idx = int(np.argmax(np.abs(correlation)))
+        delay_samples = peak_idx - zero_lag
+
+    axes[2].axvline(x=zero_lag, color='gray', linestyle=':', label='Lag 0')
     axes[2].axvline(x=peak_idx, color='k', linestyle='--',
-                    label=f'Maksimum (opóźnienie {delay_samples} próbek)')
+                    label=f'Maksimum przy środku (opóźnienie {delay_samples} próbek)')
     axes[2].set_ylabel('Korelacja')
     axes[2].set_xlabel('Opóźnienie (próbki)')
     axes[2].set_title(title)
