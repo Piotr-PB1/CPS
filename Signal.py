@@ -18,6 +18,7 @@ class Signal:
         self.p = float(p)
         self.sampling = float(sampling)
         self.signal = None    
+        # self.signalIMG = None
         self.t = None         
         self.discrete_signal = False
         self.quantization_signal = None
@@ -57,24 +58,26 @@ class Signal:
         if self.signal is None:
             raise ValueError("Brak próbek")
 
-        data = np.asarray(self.signal, dtype=np.float64)
+        data = np.asarray(self.signal)
         n = data.size
 
         is_complex = np.iscomplexobj(data)
         is_discrete = self.discrete_signal
 
-        type_id = int(type(self).__name__[1:]) if type(self).__name__.startswith("S") else 0
+        # Determine type id only for classes named like 'S1', 'S2', etc.
+        cls_name = type(self).__name__
+        if cls_name.startswith('S') and cls_name[1:].isdigit():
+            type_id = int(cls_name[1:])
+        else:
+            type_id = 0
 
         flags = (1 if is_complex else 0) | (2 if is_discrete else 0)
 
         with open(filename, "wb") as f:
-
             f.write(MAGIC)
             f.write(struct.pack("B", VERSION))
             f.write(struct.pack("B", flags))
-
             f.write(struct.pack("B", type_id))
-
             f.write(struct.pack("d", self.A))
             f.write(struct.pack("d", self.T))
             f.write(struct.pack("d", self.t1))
@@ -86,7 +89,6 @@ class Signal:
             f.write(struct.pack("d", self.p))
             f.write(struct.pack("d", self.sampling))
             f.write(struct.pack("?", self.discrete_signal))
-
             f.write(struct.pack("I", n))
 
             if is_complex:
@@ -95,17 +97,17 @@ class Signal:
                 real_imag[1::2] = data.imag.ravel()
                 f.write(real_imag.tobytes())
             else:
-                f.write(data.tobytes())
+                f.write(np.asarray(data, dtype=np.float64).tobytes())
 
     def save_to_txt(self, filename):
 
         self._ensure_signal()
+        if self.t is None:
+            self.t = self.t1 + np.arange(len(self.signal)) / self.sampling
         self._validate_arrays()
 
-        with open(filename,"w") as f:
-
+        with open(filename, "w") as f:
             f.write(f"{type(self).__name__}\n")
-
             f.write(f"A {self.A}\n")
             f.write(f"T {self.T}\n")
             f.write(f"t1 {self.t1}\n")
@@ -117,11 +119,13 @@ class Signal:
             f.write(f"p {self.p}\n")
             f.write(f"sampling {self.sampling}\n")
             f.write(f"Discrete {int(self.discrete_signal)}\n")
-
             f.write(f"N {len(self.signal)}\n\n")
 
-            for t,v in zip(self.t,self.signal):
-                f.write(f"{t} {v}\n")
+            for t, v in zip(self.t, self.signal):
+                if np.iscomplexobj(v):
+                    f.write(f"{t} {v.real} {v.imag}\n")
+                else:
+                    f.write(f"{t} {v}\n")
 
     @classmethod
     def load_from_bin(cls, filename):
@@ -189,10 +193,15 @@ class Signal:
             type_name = f.readline().strip()
             params = {}
             while True:
-                line = f.readline().strip()
+                line = f.readline()
+                if not line:
+                    raise ValueError("Nieprawidłowy format pliku TXT")
+                line = line.strip()
                 if line.startswith("N"):
                     n = int(line.split()[1])
                     break
+                if line == "":
+                    continue
                 k, v = line.split()
                 params[k] = float(v)
             t = []
@@ -201,34 +210,39 @@ class Signal:
             for line in f:
                 if line.strip() == "":
                     continue
-
-                tv, v = line.split()
-                t.append(float(tv))
-                data.append(float(v))
+                parts = line.split()
+                if len(parts) == 2:
+                    # format: t value (real)
+                    tv = float(parts[0])
+                    value = float(parts[1])
+                elif len(parts) == 3:
+                    # format: t real imag (complex)
+                    tv = float(parts[0])
+                    value = complex(float(parts[1]), float(parts[2]))
+                else:
+                    raise ValueError(f"Nieprawidłowy wiersz danych: {line.strip()}")
+                t.append(tv)
+                data.append(value)
 
         module = __import__(__name__)
         klass = getattr(module, type_name, cls)
 
         obj = object.__new__(klass)
-
-        obj.A = params.get("A",0)
-        obj.T = params.get("T",0)
-        obj.t1 = params.get("t1",0)
-        obj.d = params.get("d",0)
-        obj.kw = params.get("kw",0)
-        obj.ts = params.get("ts",0)
-        obj.ns = int(params.get("ns",0))
-        obj.n1 = int(params.get("n1",0))
-        obj.p = params.get("p",0)
-        obj.sampling = params.get("sampling",1)
-
+        obj.A = params.get("A", 0)
+        obj.T = params.get("T", 0)
+        obj.t1 = params.get("t1", 0)
+        obj.d = params.get("d", 0)
+        obj.kw = params.get("kw", 0)
+        obj.ts = params.get("ts", 0)
+        obj.ns = int(params.get("ns", 0))
+        obj.n1 = int(params.get("n1", 0))
+        obj.p = params.get("p", 0)
+        obj.sampling = params.get("sampling", 1)
         obj.t = np.array(t)
         obj.signal = np.array(data)
-
-        obj.discrete_signal = bool(params.get("Discrete",0))
-
+        obj.discrete_signal = bool(params.get("Discrete", 0))
         return obj
-
+    
     def mean_value(self):
         if self.signal is None:
             self.generate_signal()

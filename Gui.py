@@ -8,6 +8,7 @@ from Filters import (convolution, design_filter, filter_signal, show_filter_comp
                      cross_correlation, radar_distance_measurement, show_correlation_analysis,
                      default_radar_search_window)
 from Generators import create_signal, quantize_signal, extrapolate_signal
+import Transformation as tr
 
 SYGNALY = [
     "szum o rozkładzie jednostajnym",
@@ -44,7 +45,6 @@ signal_frames = []
 
 
 def do_math(sig1_idx, sig2_idx, operation):
-    #'dodawanie', 'odejmowanie', 'mnozenie', 'dzielenie'
     if sig1_idx < 0 or sig2_idx < 0:
         messagebox.showerror("Błąd", "Wybierz oba sygnały!")
         return
@@ -113,16 +113,17 @@ def get_signal_type_index(sig):
         return sig.signal_type
     return -1
 
+
 def build_info_from_signal(sig):
     idx = get_signal_type_index(sig)
     if idx < 0 or idx >= len(SYGNALY):
         sig_name = "Nieznany"
     else:
         sig_name = SYGNALY[idx]
-    
+
     parts = [sig_name]
     needed = PARAMS_NEEDED[idx] if idx >= 0 else [False]*9
-    
+
     attrs = {
         'A': sig.A, 'T': sig.T, 't1': sig.t1, 'd': sig.d,
         'kw': sig.kw, 'ts': sig.ts, 'ns': sig.ns, 'n1': sig.n1, 'p': sig.p
@@ -136,6 +137,7 @@ def build_info_from_signal(sig):
                 parts.append(f"{label}={val}")
     parts.append(f"sampling={sig.sampling:.0f}")
     return " ".join(parts)
+
 
 def signal_params_window(signal, parent):
     window = tk.Toplevel(parent)
@@ -153,9 +155,10 @@ def signal_params_window(signal, parent):
     for param in params:
         tk.Label(window, text=param, justify=tk.LEFT).pack(fill=tk.X, padx=10, pady=5)
 
+
 def save_signal_bin(idx):
     try:
-        filename = filedialog.asksaveasfilename(defaultextension=".bin", 
+        filename = filedialog.asksaveasfilename(defaultextension=".bin",
                                                 filetypes=[("Binary", "*.bin"), ("All", "*.*")])
         if filename:
             list_of_signals[idx].save_to_bin(filename)
@@ -163,15 +166,17 @@ def save_signal_bin(idx):
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd zapisu: {str(e)}")
 
+
 def save_signal_txt(idx):
     try:
-        filename = filedialog.asksaveasfilename(defaultextension=".txt", 
+        filename = filedialog.asksaveasfilename(defaultextension=".txt",
                                                 filetypes=[("Text", "*.txt"), ("All", "*.*")])
         if filename:
             list_of_signals[idx].save_to_txt(filename)
             messagebox.showinfo("Sukces", f"Sygnał zapisany do {filename}")
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd zapisu: {str(e)}")
+
 
 def load_signal():
     try:
@@ -187,6 +192,7 @@ def load_signal():
             messagebox.showinfo("Sukces", f"Sygnał wczytany z {filename}")
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd odczytu: {str(e)}")
+
 
 def quantize_signal_dialog(idx):
     def apply_quantization():
@@ -208,6 +214,7 @@ def quantize_signal_dialog(idx):
     bits_entry.insert(0, "8")
     bits_entry.pack(padx=10, pady=5)
     tk.Button(quant_window, text="Zastosuj", command=apply_quantization, bg='lightgreen').pack(padx=10, pady=10)
+
 
 def extrapolate_signal_dialog(idx):
     def apply_extrapolation():
@@ -235,6 +242,7 @@ def extrapolate_signal_dialog(idx):
     range_entry.pack(padx=10, pady=5)
     tk.Button(extrap_window, text="Zastosuj", command=apply_extrapolation, bg='lightgreen').pack(padx=10, pady=10)
 
+
 def perform_convolution(sig1_idx, sig2_idx):
     try:
         if sig1_idx < 0 or sig2_idx < 0:
@@ -243,7 +251,7 @@ def perform_convolution(sig1_idx, sig2_idx):
 
         sig1 = list_of_signals[sig1_idx]
         sig2 = list_of_signals[sig2_idx]
-        
+
         sig1._ensure_signal()
         sig2._ensure_signal()
 
@@ -263,7 +271,7 @@ def perform_convolution(sig1_idx, sig2_idx):
             sampling=sig1.sampling
         )
         result_obj.info_text = f"[Splot: {sig1.info_text or 'Sig1'} * {sig2.info_text or 'Sig2'}]"
-        
+
         list_of_signals.append(result_obj)
         update_signals_display()
 
@@ -271,6 +279,7 @@ def perform_convolution(sig1_idx, sig2_idx):
 
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas obliczania splotu: {str(e)}")
+
 
 def design_and_apply_filter():
     try:
@@ -280,7 +289,6 @@ def design_and_apply_filter():
             return
 
         M = int(filter_order_entry.get())
-        fc = float(filter_cutoff_entry.get()) 
         window_type = filter_window_var.get()
         filter_type = filter_type_var.get()
 
@@ -290,29 +298,51 @@ def design_and_apply_filter():
 
         sig = list_of_signals[sig_idx]
         sig._ensure_signal()
-        
-        nyquist_freq = sig.sampling / 2
-        if fc <= 0 or fc >= nyquist_freq:
-            messagebox.showerror(
-                "Błąd",
-                f"Częstotliwość cięcia musi być z zakresu (0, {nyquist_freq:.1f}) Hz!\n"
-                f"Dla tego sygnału fs={sig.sampling} Hz"
-            )
+        fs = sig.sampling
+        nyquist_freq = fs / 2
+
+        if filter_type == 'lowpass':
+            fc = float(filter_cutoff_entry.get())
+            if fc <= 0 or fc >= nyquist_freq:
+                messagebox.showerror(
+                    "Błąd",
+                    f"Częstotliwość cięcia musi być z zakresu (0, {nyquist_freq:.1f}) Hz!\n"
+                    f"Dla tego sygnału fs={fs} Hz"
+                )
+                return
+            K = fs / fc
+            h = design_filter(M, K=K, window_type=window_type, filter_type='lowpass')
+            filter_desc = f"dolnoprzepustowy fc={fc}Hz"
+        elif filter_type == 'bandpass':
+            f_center = float(filter_center_entry.get())
+            bandwidth = float(filter_bandwidth_entry.get())
+            if f_center <= 0 or f_center >= nyquist_freq:
+                messagebox.showerror(
+                    "Błąd",
+                    f"Częstotliwość środkowa musi być z zakresu (0, {nyquist_freq:.1f}) Hz!"
+                )
+                return
+            if bandwidth <= 0 or bandwidth >= 2 * min(f_center, nyquist_freq - f_center):
+                messagebox.showerror(
+                    "Błąd",
+                    f"Szerokość pasma musi być dodatnia i nie większa niż {2*min(f_center, nyquist_freq-f_center):.1f} Hz"
+                )
+                return
+            h = design_filter(M, filter_type='bandpass', window_type=window_type,
+                              f_center=f_center, fs=fs, bandwidth=bandwidth)
+            filter_desc = f"środkowoprzepustowy f0={f_center}Hz, BW={bandwidth}Hz"
+        else:
+            messagebox.showerror("Błąd", f"Nieobsługiwany typ filtru: {filter_type}")
             return
-        
-        K = sig.sampling / fc
-        
-        h = design_filter(M, K, window_type=window_type, filter_type=filter_type)
 
         filtered = filter_signal(sig.signal, h, compensate_delay=True)
 
         result_obj = sg.Signal.from_array(
             sig.t if sig.t is not None else np.arange(len(filtered)),
             filtered,
-            sampling=sig.sampling
+            sampling=fs
         )
-        result_obj.info_text = f"[{filter_type.upper()} M={M} fc={fc:.1f}Hz {window_type}]"
-        
+        result_obj.info_text = f"[{filter_desc} M={M} {window_type}]"
         list_of_signals.append(result_obj)
         update_signals_display()
 
@@ -320,10 +350,7 @@ def design_and_apply_filter():
 
         messagebox.showinfo(
             "Sukces",
-            f"Filtr zastosowany!\n"
-            f"Częstotliwość cięcia: {fc} Hz\n"
-            f"Parametr K: {K:.2f}\n"
-            f"Długość wyniku: {len(filtered)}"
+            f"Filtr zastosowany!\n{filter_desc}\nDługość wyniku: {len(filtered)}"
         )
 
     except ValueError as e:
@@ -331,11 +358,64 @@ def design_and_apply_filter():
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas filtracji: {str(e)}")
 
+
+def perform_transform():
+    try:
+        idx = transform_signal_combo.current()
+        if idx < 0:
+            messagebox.showerror("Błąd", "Wybierz sygnał do transformacji!")
+            return
+
+        sig = list_of_signals[idx]
+        sig._ensure_signal()
+        if sig.signal is None or len(sig.signal) == 0:
+            messagebox.showerror("Błąd", "Sygnał nie zawiera próbek.")
+            return
+
+        method = transform_method_var.get()
+        mode = transform_mode_var.get()
+        if method not in tr.METHOD_NAMES:
+            messagebox.showerror("Błąd", "Wybierz metodę transformacji!")
+            return
+        if mode not in ('W1', 'W2'):
+            messagebox.showerror("Błąd", "Wybierz tryb wykresu (W1 lub W2)!")
+            return
+
+        result, elapsed, N = tr.run_transform(sig.signal, method)
+        fs = float(sig.sampling)
+        
+        if method in ('dct2', 'fct2'):
+            freq_axis = np.arange(N) * fs / (2.0 * N)
+            X = result
+            shift_note = ""
+        else:
+            freqs = np.fft.fftfreq(N, d=1.0 / fs)
+            if transform_shift_var.get():
+                X = np.fft.fftshift(result)
+                freq_axis = np.fft.fftshift(freqs)
+                shift_note = ", shifted"
+            else:
+                X = result
+                freq_axis = freqs
+                shift_note = ""
+
+        result_obj = sg.Signal.from_array(freq_axis, X, t1=float(freq_axis[0]) if N > 0 else 0.0,
+                                          sampling=sig.sampling, discrete_signal=True)
+        result_obj.info_text = f"[{tr.METHOD_NAMES[method]}, N={N}, {mode}{shift_note}, czas={elapsed:.6f}s]"
+        list_of_signals.append(result_obj)
+        update_signals_display()
+
+        show_complex_plot(X, freq_axis, result_obj.info_text, mode)
+        messagebox.showinfo("Sukces", f"Transformacja wykonana w {elapsed:.6f} s")
+    except Exception as e:
+        messagebox.showerror("Błąd", f"Błąd podczas transformacji: {str(e)}")
+
+
 def compute_correlation():
     try:
         sig1_idx = corr_signal1_combo.current()
         sig2_idx = corr_signal2_combo.current()
-        
+
         if sig1_idx < 0 or sig2_idx < 0:
             messagebox.showerror("Błąd", "Wybierz oba sygnały!")
             return
@@ -344,7 +424,7 @@ def compute_correlation():
 
         sig1 = list_of_signals[sig1_idx]
         sig2 = list_of_signals[sig2_idx]
-        
+
         sig1._ensure_signal()
         sig2._ensure_signal()
 
@@ -359,7 +439,7 @@ def compute_correlation():
             sampling=fs
         )
         result_obj.info_text = f" [Korelacja: {sig1.info_text or 'Sig1'} x {sig2.info_text or 'Sig2'}]"
-        
+
         list_of_signals.append(result_obj)
         update_signals_display()
 
@@ -374,6 +454,7 @@ def compute_correlation():
 
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas obliczania korelacji: {str(e)}")
+
 
 def simulate_radar():
     try:
@@ -530,6 +611,7 @@ def simulate_radar():
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas pomiaru: {str(e)}")
 
+
 def update_field_visibility():
     signal_type = signal_type_combo.current()
     if signal_type < 0:
@@ -552,6 +634,7 @@ def update_field_visibility():
         else:
             entry.config(state=tk.DISABLED)
             label.config(fg='gray')
+
 
 def generate_signal():
     try:
@@ -582,25 +665,30 @@ def generate_signal():
     except Exception as e:
         messagebox.showerror("Błąd", f"Błąd podczas generacji: {str(e)}")
 
+
 def update_signals_display():
+    print(f"DEBUG: update_signals_display called; list_of_signals={len(list_of_signals)}")
     for frame in signal_frames:
-        frame.destroy()
+        try:
+            frame.destroy()
+        except Exception:
+            pass
     signal_frames.clear()
 
     for i, sig in enumerate(list_of_signals):
         frame = tk.Frame(signals_frame, bg='lightgray', relief=tk.RIDGE, bd=1, height=50)
         frame.pack(fill=tk.X, padx=5, pady=2)
         frame.pack_propagate(False)
-        
+
         left_frame = tk.Frame(frame, bg='lightgray')
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=2)
         right_frame = tk.Frame(frame, bg='lightgray')
         right_frame.pack(side=tk.RIGHT, padx=5, pady=2)
-        
+
         info_text = f"{i+1}. {sig.info_text or type(sig).__str__}"
         label = tk.Label(left_frame, text=info_text, bg='lightgray', justify=tk.LEFT, wraplength=400)
         label.pack(side=tk.LEFT, padx=5)
-        
+
         tk.Button(right_frame, text="Wykres", width=7, font=('Arial', 8),
                  command=lambda idx=i: show_signal_plot(idx)).pack(side=tk.LEFT, padx=1)
         tk.Button(right_frame, text="Bin", width=5, font=('Arial', 8),
@@ -618,14 +706,99 @@ def update_signals_display():
         signal_frames.append(frame)
 
     signal_list = [f"{i+1}. {s.info_text or type(s).__str__}" for i, s in enumerate(list_of_signals)]
-    for combo in [filter_signal_combo, corr_signal1_combo, corr_signal2_combo, 
-                  radar_probe_combo, radar_reflected_combo, splot_signal1_combo, splot_signal2_combo, operation_signal1_combo, operation_signal2_combo]:
-        combo['values'] = signal_list
+    combos = [
+        'filter_signal_combo', 'corr_signal1_combo', 'corr_signal2_combo',
+        'radar_probe_combo', 'radar_reflected_combo', 'splot_signal1_combo', 'splot_signal2_combo',
+        'operation_signal1_combo', 'operation_signal2_combo', 'transform_signal_combo'
+    ]
+    for name in combos:
+        try:
+            combo = globals().get(name)
+            if combo is not None:
+                combo['values'] = signal_list
+        except Exception as e:
+            print(f"DEBUG: failed to update combo {name}: {e}")
+
+    # Ensure canvas scrollregion and layout are updated so new frames become visible
+    try:
+        if signals_frame is None:
+            print("DEBUG: signals_frame is None")
+            return
+        signals_frame.update_idletasks()
+        parent_canvas = getattr(signals_frame, 'master', None)
+        if parent_canvas is not None and hasattr(parent_canvas, 'configure'):
+            bbox = parent_canvas.bbox("all")
+            print(f"DEBUG: canvas.bbox(all)={bbox}")
+            parent_canvas.configure(scrollregion=bbox)
+            try:
+                parent_canvas.yview_moveto(0)
+            except Exception:
+                pass
+        else:
+            print("DEBUG: parent_canvas not found or not a canvas")
+    except Exception as e:
+        print(f"DEBUG: update_signals_display exception: {e}")
+
+
+def show_complex_plot(X, freq_axis, title_str, mode):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+    fig.suptitle(title_str, fontsize=12, fontweight='bold')
+
+    if mode == 'W1':
+        ax1.plot(freq_axis, np.real(X), 'b-', linewidth=1)
+        ax1.set_ylabel('Re(X)')
+        ax1.grid(True)
+        ax1.legend(['Re(X)'])
+
+        ax2.plot(freq_axis, np.imag(X), 'r-', linewidth=1)
+        ax2.set_ylabel('Im(X)')
+        ax2.grid(True)
+        ax2.legend(['Im(X)'])
+    else:
+        ax1.plot(freq_axis, np.abs(X), 'b-', linewidth=1)
+        ax1.set_ylabel('|X|')
+        ax1.grid(True)
+        ax1.legend(['|X|'])
+
+        ax2.plot(freq_axis, np.angle(X), 'r-', linewidth=1)
+        ax2.set_ylabel('arg(X)')
+        ax2.grid(True)
+        ax2.legend(['arg(X)'])
+
+    ax2.set_xlabel('Częstotliwość [Hz]')
+    plt.tight_layout()
+    plt.show()
+
 
 def show_signal_plot(idx):
     if 0 <= idx < len(list_of_signals):
         sig = list_of_signals[idx]
         sig._ensure_signal()
+        if sig.signal is None:
+            messagebox.showerror("Błąd", "Sygnał nie zawiera próbek.")
+            return
+
+        # Robust complex detection: dtype kind 'c' or any non-zero imaginary part
+        arr = np.asarray(sig.signal)
+        is_complex = False
+        try:
+            if hasattr(arr, 'dtype') and getattr(arr.dtype, 'kind', None) == 'c':
+                is_complex = True
+            else:
+                # check imaginary component magnitude
+                if np.any(np.abs(np.imag(arr)) > 1e-12):
+                    is_complex = True
+        except Exception:
+            is_complex = np.iscomplexobj(arr)
+
+        if is_complex:
+            if sig.t is None:
+                freq_axis = np.arange(len(arr), dtype=float)
+            else:
+                freq_axis = np.asarray(sig.t, dtype=float)
+            show_complex_plot(arr, freq_axis, sig.info_text or type(sig).__str__, 'W1')
+            return
+
         plt.figure(figsize=(10, 4))
         if sig.t is not None:
             plt.plot(sig.t, sig.signal, 'b-', linewidth=1)
@@ -639,9 +812,11 @@ def show_signal_plot(idx):
         plt.tight_layout()
         plt.show()
 
+
 def delete_signal(idx):
     list_of_signals.pop(idx)
     update_signals_display()
+
 
 def run():
     global root, signal_type_combo, signal_A_entry, signal_T_entry, signal_t1_entry, signal_d_entry
@@ -649,9 +824,11 @@ def run():
     global signal_sampling_entry, signals_frame, filter_signal_combo, filter_type_var, filter_window_var
     global filter_order_entry, filter_cutoff_entry, corr_signal1_combo, corr_signal2_combo, corr_method_var
     global radar_probe_combo, radar_reflected_combo, radar_sampling_entry, radar_speed_entry, radar_delay_entry
-    global splot_signal1_combo, splot_signal2_combo, signal_A_label, signal_T_label, signal_t1_label
+    global splot_signal1_combo, splot_signal2_combo, transform_signal_combo, signal_A_label, signal_T_label, signal_t1_label
     global signal_d_label, signal_kw_label, signal_ts_label, signal_ns_label, signal_n1_label, signal_p_label
     global operation_signal1_combo, operation_signal2_combo
+    global filter_center_entry, filter_bandwidth_entry, transform_method_var, transform_mode_var
+    global transform_shift_var
 
     root = tk.Tk()
     root.title("Cyfrowe Przetwarzanie Sygnałów - Zadanie 3")
@@ -683,7 +860,7 @@ def run():
         ("Indeks próbki (n1):", 'n1'),
         ("Prawdopodobieństwo (p):", 'p'),
     ]
-    
+
     row = 1
     entry_map = {}
     for label_text, param_name in entries_info:
@@ -713,14 +890,38 @@ def run():
     buttons_frame = tk.Frame(tab_generate)
     buttons_frame.pack(fill=tk.X, padx=5, pady=5)
 
-    tk.Button(buttons_frame, text="Generuj sygnał", command=generate_signal, 
+    tk.Button(buttons_frame, text="Generuj sygnał", command=generate_signal,
              bg='lightgreen', height=2, width=20).pack(side=tk.LEFT, padx=5)
-    tk.Button(buttons_frame, text="Wczytaj z pliku", command=load_signal, 
+    tk.Button(buttons_frame, text="Wczytaj z pliku", command=load_signal,
              bg='lightblue', height=2, width=20).pack(side=tk.LEFT, padx=5)
 
     tk.Label(tab_generate, text="Wygenerowane sygnały:").pack(fill=tk.X, padx=5, pady=(10, 0))
-    signals_frame = tk.Frame(tab_generate)
-    signals_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    container = tk.Frame(tab_generate)
+    container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    canvas = tk.Canvas(container)
+    scrollbar = ttk.Scrollbar(container, orient='vertical', command=canvas.yview)
+    scrollable_frame = tk.Frame(canvas)
+
+    def _on_frame_config(event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    scrollable_frame.bind("<Configure>", _on_frame_config)
+    window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor='nw')
+
+    def _on_canvas_config(event):
+        try:
+            canvas.itemconfig(window_id, width=event.width)
+        except Exception:
+            pass
+
+    canvas.bind('<Configure>', _on_canvas_config)
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    signals_frame = scrollable_frame
     tab_generate.rowconfigure(2, weight=1)
     tab_generate.columnconfigure(1, weight=1)
 
@@ -730,7 +931,7 @@ def run():
     tk.Label(tab_operation, text="Sygnał 1:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
     operation_signal1_combo = ttk.Combobox(tab_operation, state='readonly', width=40)
     operation_signal1_combo.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
-    tk.Label(tab_operation, text="Sygnał 2:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)    
+    tk.Label(tab_operation, text="Sygnał 2:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
     operation_signal2_combo = ttk.Combobox(tab_operation, state='readonly', width=40)
     operation_signal2_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
     tk.Label(tab_operation, text="Operacja:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
@@ -738,7 +939,7 @@ def run():
     operation_var.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
 
     tk.Button(tab_operation, text="Wykonaj operację", command=lambda: do_math(
-             operation_signal1_combo.current(), operation_signal2_combo.current(), operation_var.get()), 
+             operation_signal1_combo.current(), operation_signal2_combo.current(), operation_var.get()),
              bg='lightyellow', height=2).grid(row=3, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
 
     # ========== TAB 1.5: SPLOT ==========
@@ -751,35 +952,79 @@ def run():
     splot_signal2_combo = ttk.Combobox(tab_splot, state='readonly', width=40)
     splot_signal2_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
     tk.Button(tab_splot, text="Wykonaj splot", command=lambda: perform_convolution(
-             splot_signal1_combo.current(), splot_signal2_combo.current()), 
+             splot_signal1_combo.current(), splot_signal2_combo.current()),
              bg='lightyellow', height=2).grid(row=2, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
 
-    # ========== TAB 2: FILTRACJA ==========
+    # ========== TAB 2: TRANSFORMACJE (F1/T1) ==========
+    tab_transform = ttk.Frame(notebook)
+    notebook.add(tab_transform, text="Transformacje (F1/T1)")
+
+    tk.Label(tab_transform, text="Sygnał do transformacji:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+    transform_signal_combo = ttk.Combobox(tab_transform, state='readonly', width=40)
+    transform_signal_combo.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Label(tab_transform, text="Metoda transformacji:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+    transform_method_var = tk.StringVar(value='dft')
+    method_combo = ttk.Combobox(tab_transform, textvariable=transform_method_var,
+                                 values=['dft', 'dit_fft', 'dct2', 'fct2'], state='readonly')
+    method_combo.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Label(tab_transform, text="Tryb wyświetlenia (W1/W2):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+    transform_mode_var = tk.StringVar(value='W1')
+    mode_combo = ttk.Combobox(tab_transform, textvariable=transform_mode_var,
+                               values=['W1', 'W2'], state='readonly')
+    mode_combo.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Label(tab_transform, text="Przesunięcie (DFT/FFT shift):").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+    transform_shift_var = tk.BooleanVar(value=True)
+    shift_check = tk.Checkbutton(tab_transform, variable=transform_shift_var)
+    shift_check.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+
+    tk.Button(tab_transform, text="Wykonaj transformację", command=perform_transform,
+             bg='lightblue', height=2).grid(row=4, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
+
+    # ========== TAB 3: FILTRACJA (poprawiona) ==========
     tab_filter = ttk.Frame(notebook)
     notebook.add(tab_filter, text="Filtracja (O1/F1)")
+
     tk.Label(tab_filter, text="Sygnał do filtracji:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
     filter_signal_combo = ttk.Combobox(tab_filter, state='readonly', width=40)
     filter_signal_combo.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
+
     tk.Label(tab_filter, text="Typ filtru:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
     filter_type_var = tk.StringVar(value='bandpass')
     filter_type_combo = ttk.Combobox(tab_filter, textvariable=filter_type_var,
                                       values=['bandpass', 'lowpass'], state='readonly')
     filter_type_combo.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
+
     tk.Label(tab_filter, text="Okno (O1=Hamming):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
     filter_window_var = tk.StringVar(value='hamming')
     window_combo = ttk.Combobox(tab_filter, textvariable=filter_window_var,
                                  values=['rectangular', 'hamming'], state='readonly')
     window_combo.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=5)
+
     tk.Label(tab_filter, text="Rząd filtru (M - nieparzyste):").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
     filter_order_entry = tk.Entry(tab_filter, width=15)
     filter_order_entry.insert(0, "25")
     filter_order_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
-    tk.Label(tab_filter, text="Częstotliwość cięcia [Hz]:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+
+    tk.Label(tab_filter, text="Częstotliwość odcięcia [Hz] (lowpass):").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
     filter_cutoff_entry = tk.Entry(tab_filter, width=15)
     filter_cutoff_entry.insert(0, "100")
     filter_cutoff_entry.grid(row=4, column=1, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Label(tab_filter, text="Częstotliwość środkowa [Hz] (bandpass):").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+    filter_center_entry = tk.Entry(tab_filter, width=15)
+    filter_center_entry.insert(0, "200")
+    filter_center_entry.grid(row=5, column=1, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Label(tab_filter, text="Szerokość pasma [Hz] (bandpass):").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+    filter_bandwidth_entry = tk.Entry(tab_filter, width=15)
+    filter_bandwidth_entry.insert(0, "50")
+    filter_bandwidth_entry.grid(row=6, column=1, sticky=tk.EW, padx=5, pady=5)
+
     tk.Button(tab_filter, text="Zastosuj filtr", command=design_and_apply_filter,
-             bg='lightblue', height=2).grid(row=5, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
+             bg='lightblue', height=2).grid(row=7, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
 
     # ========== TAB 3: KORELACJA ==========
     tab_corr = ttk.Frame(notebook)
@@ -800,14 +1045,14 @@ def run():
 
     # ========== TAB 4: SENSOR RADAROWY ==========
     tab_radar = ttk.Frame(notebook)
-    notebook.add(tab_radar, text="Sensor radarowy")    
+    notebook.add(tab_radar, text="Sensor radarowy")
     radar_params_frame = tk.Frame(tab_radar)
     radar_params_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-    
+
     tk.Label(radar_params_frame, text="Sygnał sondujący (probe):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
     radar_probe_combo = ttk.Combobox(radar_params_frame, state='readonly', width=40)
     radar_probe_combo.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
-    
+
     tk.Label(radar_params_frame, text="Sygnał zwrotny (reflected):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
     radar_reflected_combo = ttk.Combobox(radar_params_frame, state='readonly', width=40)
     radar_reflected_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
@@ -815,12 +1060,12 @@ def run():
              text="Dwa sygnały: zwrotny jest przesuwany o Δt1=(t1_zwrotny−t1_sonda) na osi sondy, "
                   "jak echo przy jednym sygnale. Korelacja daje τ i odległość v·τ/2.",
              fg='gray', font=('Arial', 8)).grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=0)
-    
+
     tk.Label(radar_params_frame, text="Prędkość sygnału [km/s]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
     radar_speed_entry = tk.Entry(radar_params_frame, width=15)
     radar_speed_entry.insert(0, "300000")
     radar_speed_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
-    
+
     tk.Label(radar_params_frame, text="Opóźnienie [s] (jeśli brak sygnału zwrotnego):").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
     radar_delay_entry = tk.Entry(radar_params_frame, width=15)
     radar_delay_entry.insert(0, "0.05")
@@ -834,6 +1079,7 @@ def run():
              sticky=tk.EW, padx=5, pady=10)
 
     root.mainloop()
+
 
 if __name__ == '__main__':
     run()
