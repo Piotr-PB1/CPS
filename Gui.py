@@ -384,7 +384,7 @@ def perform_transform():
         result, elapsed, N = tr.run_transform(sig.signal, method)
         fs = float(sig.sampling)
         
-        if method in ('dct2', 'fct2'):
+        if method in ('dct2', 'fct2', 'idct2', 'ifct2'):
             freq_axis = np.arange(N) * fs / (2.0 * N)
             X = result
             shift_note = ""
@@ -966,7 +966,7 @@ def run():
     tk.Label(tab_transform, text="Metoda transformacji:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
     transform_method_var = tk.StringVar(value='dft')
     method_combo = ttk.Combobox(tab_transform, textvariable=transform_method_var,
-                                 values=['dft', 'dit_fft', 'dct2', 'fct2'], state='readonly')
+                                 values=['dft', 'idft', 'dit_fft', 'idit_fft', 'dct2', 'idct2', 'fct2', 'ifct2'], state='readonly')
     method_combo.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
 
     tk.Label(tab_transform, text="Tryb wyświetlenia (W1/W2):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
