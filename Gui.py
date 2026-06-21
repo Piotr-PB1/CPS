@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import copy
 from Filters import (convolution, design_filter, filter_signal, show_filter_comparison,
-                     cross_correlation, radar_distance_measurement, show_correlation_analysis,
+                     cross_correlation, radar_delay_measurement, show_correlation_analysis,
                      default_radar_search_window)
 from Generators import create_signal, quantize_signal, extrapolate_signal
 import Transformation as tr
@@ -431,7 +431,8 @@ def compute_correlation():
         result = cross_correlation(sig1.signal, sig2.signal, method=method)
 
         fs = sig1.sampling if abs(sig1.sampling - sig2.sampling) < 1e-9 else 1.0
-        t_result = (sig1.t1 - sig2.t1) + (np.arange(len(result)) - (len(sig1.signal) - 1)) / fs
+        zero_lag_idx = len(sig2.signal) - 1
+        t_result = (sig1.t1 - sig2.t1) + (np.arange(len(result)) - zero_lag_idx) / fs
 
         result_obj = sg.Signal.from_array(
             t_result,
@@ -460,7 +461,7 @@ def simulate_radar():
     try:
         probe_idx = radar_probe_combo.current()
         reflected_idx = radar_reflected_combo.current()
-        signal_speed = float(radar_speed_entry.get())
+        known_distance = float(radar_distance_entry.get())
 
         use_delay = reflected_idx < 0
 
@@ -468,8 +469,8 @@ def simulate_radar():
             messagebox.showerror("Błąd", "Wybierz sygnał sondujący!")
             return
 
-        if signal_speed <= 0:
-            messagebox.showerror("Błąd", "Prędkość sygnału musi być dodatnia!")
+        if known_distance <= 0:
+            messagebox.showerror("Błąd", "Odległość musi być dodatnia!")
             return
 
         probe_sig = list_of_signals[probe_idx]
@@ -547,29 +548,30 @@ def simulate_radar():
                 f"Δt1={max(0.0, t1_diff):.4g} s → {t1_delay_samples} próbek na osi sondy)"
             )
 
-        distance, detected_delay_time, detected_shift, corr, peak_idx, zero_lag = (
-            radar_distance_measurement(
+        detected_delay_time, detected_shift, corr, peak_idx, zero_lag = (
+            radar_delay_measurement(
                 probe_data,
                 reflected_data,
                 actual_sampling,
-                signal_speed,
-                method='direct',
+                method='auto',
                 search_window=radar_search_window,
                 echo_mode=echo_mode,
             )
         )
 
         corr_delay_time = detected_delay_time
-        corr_delay_samples = detected_shift
+        corr_lag_samples = detected_shift
+        corr_delay_samples = abs(detected_shift)
 
-        if use_delay:
-            total_delay_time = corr_delay_time
-            total_delay_samples = corr_delay_samples
-        else:
-            total_delay_time = corr_delay_time
-            total_delay_samples = corr_delay_samples
+        total_delay_time = corr_delay_time
+        if total_delay_time <= 0:
+            messagebox.showerror(
+                "Błąd",
+                "Nie można wyznaczyć prędkości dla zerowego opóźnienia korelacji."
+            )
+            return
 
-        distance = (signal_speed * total_delay_time) / 2
+        measured_speed = (2 * known_distance) / total_delay_time
 
         show_correlation_analysis(
             probe_data,
@@ -593,13 +595,17 @@ def simulate_radar():
             f"Sygnał sondujący: {list_of_signals[probe_idx].info_text}\n"
             f"Sygnał zwrotny:   {reflected_label}\n\n"
             f"{t1_info}"
-            f"Opóźnienie z korelacji (maksimum najbliżej środka / lagu 0):\n"
-            f"  {corr_delay_time:.6f} s  ({corr_delay_samples} próbek)\n\n"
-            f"Zmierzona odległość: {distance:.4f} km\n"
-            f"  (v × τ_korelacji / 2)\n\n"
+            f"Maksimum funkcji korelacji:\n"
+            f"  indeks maksimum: {peak_idx}, indeks lag 0: {zero_lag}\n"
+            f"  lag maksimum: {corr_lag_samples:+d} próbek\n"
+            f"  opóźnienie do obliczenia prędkości: {corr_delay_time:.6f} s "
+            f"({corr_delay_samples} próbek)\n\n"
+            f"Podana odległość: {known_distance:.4f} km ({known_distance * 1000:.2f} m)\n"
+            f"Wyznaczona prędkość: {measured_speed:.4f} km/s\n"
+            f"  (2 × d / τ_korelacji)\n\n"
             f"Parametry:\n"
             f"  Częstość próbkowania: {actual_sampling:.0f} Hz\n"
-            f"  Prędkość sygnału:     {signal_speed} km/s\n"
+            f"  Odległość wejściowa:  {known_distance} km\n"
             f"  Długość sygnału:      {len(probe_data)} próbek\n"
             f"  Długość korelacji:    {len(corr)} próbek"
         )
@@ -823,7 +829,7 @@ def run():
     global signal_kw_entry, signal_ts_entry, signal_ns_entry, signal_n1_entry, signal_p_entry
     global signal_sampling_entry, signals_frame, filter_signal_combo, filter_type_var, filter_window_var
     global filter_order_entry, filter_cutoff_entry, corr_signal1_combo, corr_signal2_combo, corr_method_var
-    global radar_probe_combo, radar_reflected_combo, radar_sampling_entry, radar_speed_entry, radar_delay_entry
+    global radar_probe_combo, radar_reflected_combo, radar_sampling_entry, radar_distance_entry, radar_delay_entry
     global splot_signal1_combo, splot_signal2_combo, transform_signal_combo, signal_A_label, signal_T_label, signal_t1_label
     global signal_d_label, signal_kw_label, signal_ts_label, signal_ns_label, signal_n1_label, signal_p_label
     global operation_signal1_combo, operation_signal2_combo
@@ -1058,13 +1064,13 @@ def run():
     radar_reflected_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
     tk.Label(radar_params_frame,
              text="Dwa sygnały: zwrotny jest przesuwany o Δt1=(t1_zwrotny−t1_sonda) na osi sondy, "
-                  "jak echo przy jednym sygnale. Korelacja daje τ i odległość v·τ/2.",
+                  "jak echo przy jednym sygnale. Korelacja daje τ, a dla podanej odległości d liczymy v=2d/τ.",
              fg='gray', font=('Arial', 8)).grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=0)
 
-    tk.Label(radar_params_frame, text="Prędkość sygnału [km/s]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_speed_entry = tk.Entry(radar_params_frame, width=15)
-    radar_speed_entry.insert(0, "300000")
-    radar_speed_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
+    tk.Label(radar_params_frame, text="Odległość [km]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_distance_entry = tk.Entry(radar_params_frame, width=15)
+    radar_distance_entry.insert(0, "7500")
+    radar_distance_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
 
     tk.Label(radar_params_frame, text="Opóźnienie [s] (jeśli brak sygnału zwrotnego):").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
     radar_delay_entry = tk.Entry(radar_params_frame, width=15)
@@ -1074,7 +1080,7 @@ def run():
     radar_sampling_entry = tk.Entry(radar_params_frame, width=1)
     radar_sampling_entry.insert(0, "1000")
 
-    tk.Button(radar_params_frame, text="Pomiar odległości SENSOREM RADAROWYM", command=simulate_radar,
+    tk.Button(radar_params_frame, text="Wyznacz prędkość SENSOREM RADAROWYM", command=simulate_radar,
              bg='lightcoral', height=2, font=('Arial', 10, 'bold')).grid(row=5, column=0, columnspan=2,
              sticky=tk.EW, padx=5, pady=10)
 

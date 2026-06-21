@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from tqdm import tqdm, trange
 
 def convolution(h, x, mode='full'):
     M = len(h)
@@ -128,27 +127,36 @@ def show_filter_comparison(original, filtered, h):
 
 
 def correlation_direct(h, x):
-    M = len(h)
-    N = len(x)
-    result_len = M + N - 1
-    result = np.zeros(result_len)
-
-    for n in tqdm(range(-(N - 1), M), desc="Obliczam korelację bezpośrednią", unit="próbka"):
-        s = 0.0
-        for k in range(M):
-            x_index = k - n
-            if 0 <= x_index < N:
-                s += h[k] * x[x_index]
-        result[n + (N - 1)] = s
-    return result
+    return np.convolve(np.asarray(h), np.asarray(x)[::-1], mode='full')
 
 
 def correlation_using_convolution(h, x):
-    M = len(h)
-    N = len(x)
-    x_reversed = x[::-1]
-    result = convolution(h, x_reversed, mode='full')
-    return result
+    return np.convolve(np.asarray(h), np.asarray(x)[::-1], mode='full')
+
+
+def correlation_fft(h, x):
+    h = np.asarray(h)
+    x = np.asarray(x)
+    result_len = len(h) + len(x) - 1
+    if result_len <= 0:
+        return np.array([])
+
+    fft_len = 1 << (result_len - 1).bit_length()
+    result = np.fft.ifft(
+        np.fft.fft(h, fft_len) * np.fft.fft(x[::-1], fft_len)
+    )[:result_len]
+
+    if not (np.iscomplexobj(h) or np.iscomplexobj(x)):
+        return result.real
+    return np.real_if_close(result, tol=1000)
+
+
+def correlation_auto(h, x):
+    h = np.asarray(h)
+    x = np.asarray(x)
+    if len(h) * len(x) <= 2_000_000:
+        return correlation_direct(h, x)
+    return correlation_fft(h, x)
 
 
 def cross_correlation(signal1, signal2, method='direct'):
@@ -156,6 +164,10 @@ def cross_correlation(signal1, signal2, method='direct'):
         return correlation_direct(signal1, signal2)
     elif method == 'convolution':
         return correlation_using_convolution(signal1, signal2)
+    elif method == 'fft':
+        return correlation_fft(signal1, signal2)
+    elif method == 'auto':
+        return correlation_auto(signal1, signal2)
     else:
         raise ValueError(f"Nieznana metoda: {method}")
 
@@ -168,9 +180,14 @@ def default_radar_search_window(num_samples, sampling_rate):
 
 
 def find_delay(correlation_result, reference_length, search_window=None):
-    corr = np.abs(np.asarray(correlation_result, dtype=float))
-    zero_lag = reference_length - 1
-    n = len(corr)
+    corr = np.asarray(correlation_result)
+    scores = np.abs(corr) if np.iscomplexobj(corr) else np.asarray(corr, dtype=float)
+    n = len(scores)
+    if n == 0:
+        return 0, 0, 0
+
+    zero_lag = int(reference_length) - 1
+    zero_lag = max(0, min(zero_lag, n - 1))
 
     if search_window is None:
         w = max(zero_lag, n - 1 - zero_lag)
@@ -180,40 +197,48 @@ def find_delay(correlation_result, reference_length, search_window=None):
     lo = max(0, zero_lag - w)
     hi = min(n, zero_lag + w + 1)
 
-    if hi - lo < 3:
+    if hi <= lo:
         return 0, zero_lag, zero_lag
 
-    peaks = []
-    for i in tqdm(range(lo + 1, hi - 1), desc="Szukam maksimum korelacji", unit="próbka"):
-        if corr[i] >= corr[i - 1] and corr[i] > corr[i + 1]:
-            peaks.append(i)
+    segment = np.nan_to_num(scores[lo:hi], nan=-np.inf)
+    max_val = float(np.max(segment))
+    if not np.isfinite(max_val):
+        return 0, zero_lag, zero_lag
 
-    if peaks:
-        peak_idx = min(peaks, key=lambda i: abs(i - zero_lag))
-    else:
-        segment = corr[lo:hi]
-        max_val = float(np.max(segment))
-        tol = 1e-9 * max(max_val, 1.0)
-        candidates = np.flatnonzero(segment >= max_val - tol) + lo
-        peak_idx = int(candidates[int(np.argmin(np.abs(candidates - zero_lag)))])
+    tol = 1e-9 * max(abs(max_val), 1.0)
+    candidates = np.flatnonzero(segment >= max_val - tol) + lo
+    peak_idx = int(candidates[int(np.argmin(np.abs(candidates - zero_lag)))])
 
-    delay_samples = abs(peak_idx - zero_lag)
+    delay_samples = int(peak_idx - zero_lag)
     return delay_samples, peak_idx, zero_lag
 
 
 def radar_distance_measurement(probe_signal, reflected_signal, sampling_rate, signal_speed,
                                method='direct', search_window=None, echo_mode=False):
-    if echo_mode:
-        corr = cross_correlation(reflected_signal, probe_signal, method=method)
-        ref_len = len(reflected_signal)
-    else:
-        corr = cross_correlation(probe_signal, reflected_signal, method=method)
-        ref_len = len(probe_signal)
-
-    delay_samples, peak_idx, zero_lag = find_delay(corr, ref_len, search_window=search_window)
-    delay_time = delay_samples / sampling_rate
+    delay_time, delay_samples, corr, peak_idx, zero_lag = radar_delay_measurement(
+        probe_signal,
+        reflected_signal,
+        sampling_rate,
+        method=method,
+        search_window=search_window,
+        echo_mode=echo_mode,
+    )
     distance = (signal_speed * delay_time) / 2
     return distance, delay_time, delay_samples, corr, peak_idx, zero_lag
+
+
+def radar_delay_measurement(probe_signal, reflected_signal, sampling_rate,
+                            method='direct', search_window=None, echo_mode=False):
+    if echo_mode:
+        corr = cross_correlation(reflected_signal, probe_signal, method=method)
+        ref_len = len(probe_signal)
+    else:
+        corr = cross_correlation(probe_signal, reflected_signal, method=method)
+        ref_len = len(reflected_signal)
+
+    delay_samples, peak_idx, zero_lag = find_delay(corr, ref_len, search_window=search_window)
+    delay_time = abs(delay_samples) / sampling_rate
+    return delay_time, delay_samples, corr, peak_idx, zero_lag
 
 
 def show_correlation_analysis(signal1, signal2, correlation, title="Korelacja sygnałów",
@@ -233,17 +258,17 @@ def show_correlation_analysis(signal1, signal2, correlation, title="Korelacja sy
     axes[1].legend()
 
     axes[2].plot(correlation, 'r-', linewidth=1.5)
-    ref_len = len(signal1)
+    ref_len = len(signal2)
     if zero_lag is None:
         zero_lag = ref_len - 1
     if peak_idx is None:
         delay_samples, peak_idx, zero_lag = find_delay(correlation, ref_len, search_window=search_window)
     else:
-        delay_samples = peak_idx - zero_lag
+        delay_samples = int(peak_idx - zero_lag)
 
     axes[2].axvline(x=zero_lag, color='gray', linestyle=':', label='Lag 0')
     axes[2].axvline(x=peak_idx, color='k', linestyle='--',
-                    label=f'Maksimum przy środku (opóźnienie {delay_samples} próbek)')
+                    label=f'Maksimum korelacji (lag {delay_samples:+d} próbek)')
     axes[2].set_ylabel('Korelacja')
     axes[2].set_xlabel('Opóźnienie (próbki)')
     axes[2].set_title(title)
