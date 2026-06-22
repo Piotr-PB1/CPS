@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import copy
 from Filters import (convolution, design_filter, filter_signal, show_filter_comparison,
-                     cross_correlation, radar_delay_measurement, show_correlation_analysis,
-                     default_radar_search_window)
+                     cross_correlation, radar_delay_measurement, show_correlation_analysis)
 from Generators import create_signal, quantize_signal, extrapolate_signal
 import Transformation as tr
 
@@ -457,165 +456,168 @@ def compute_correlation():
         messagebox.showerror("Błąd", f"Błąd podczas obliczania korelacji: {str(e)}")
 
 
+def create_composite_radar_probe(duration, sampling_rate):
+    samples = int(np.ceil(duration * sampling_rate))
+    t = np.arange(samples, dtype=float) / sampling_rate
+    probe = np.sin(2 * np.pi * t / 0.73) + 0.65 * np.sin(2 * np.pi * t / 1.11)
+    probe -= np.mean(probe)
+    return probe
+
+
+def create_delayed_echo(probe, delay_samples):
+    reflected = np.zeros_like(probe)
+    if delay_samples < len(probe):
+        reflected[delay_samples:] = probe[:len(probe) - delay_samples]
+    return reflected
+
+
+def show_radar_tracking_plot(results):
+    times = [row["time"] for row in results]
+    real_distances = [row["real_distance"] for row in results]
+    measured_distances = [row["measured_distance"] for row in results]
+    errors = [row["error"] for row in results]
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+    axes[0].plot(times, real_distances, 'bo-', label='Rzeczywista odległość')
+    axes[0].plot(times, measured_distances, 'ro--', label='Zmierzona odległość')
+    axes[0].set_ylabel('Odległość [m]')
+    axes[0].grid(True)
+    axes[0].legend()
+
+    axes[1].plot(times, errors, 'ko-', label='Błąd pomiaru')
+    axes[1].axhline(0, color='gray', linestyle=':')
+    axes[1].set_xlabel('Czas raportu [s]')
+    axes[1].set_ylabel('Błąd [m]')
+    axes[1].grid(True)
+    axes[1].legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
 def simulate_radar():
     try:
-        probe_idx = radar_probe_combo.current()
-        reflected_idx = radar_reflected_combo.current()
-        known_distance = float(radar_distance_entry.get())
+        wave_speed = float(radar_wave_speed_entry.get())
+        initial_distance = float(radar_initial_distance_entry.get())
+        object_speed = float(radar_object_speed_entry.get())
+        report_period = float(radar_report_period_entry.get())
+        report_count = int(radar_report_count_entry.get())
+        sampling_rate = float(radar_sampling_entry.get())
 
-        use_delay = reflected_idx < 0
-
-        if probe_idx < 0:
-            messagebox.showerror("Błąd", "Wybierz sygnał sondujący!")
+        if wave_speed <= 0:
+            messagebox.showerror("Błąd", "Prędkość fali musi być dodatnia!")
+            return
+        if initial_distance < 0:
+            messagebox.showerror("Błąd", "Odległość początkowa nie może być ujemna!")
+            return
+        if report_period <= 0:
+            messagebox.showerror("Błąd", "Okres raportowania musi być dodatni!")
+            return
+        if report_count <= 0:
+            messagebox.showerror("Błąd", "Liczba raportów musi być dodatnia!")
+            return
+        if sampling_rate <= 0:
+            messagebox.showerror("Błąd", "Częstość próbkowania musi być dodatnia!")
             return
 
-        if known_distance <= 0:
-            messagebox.showerror("Błąd", "Odległość musi być dodatnia!")
-            return
-
-        probe_sig = list_of_signals[probe_idx]
-        probe_sig._ensure_signal()
-
-        radar_search_window = None
-        echo_mode = False
-        reflected_label = ""
-        t1_delay_time = 0.0
-        t1_delay_samples = 0
-        t1_diff = 0.0
-
-        if use_delay:
-            delay_seconds = float(radar_delay_entry.get())
-            if delay_seconds <= 0:
-                messagebox.showerror("Błąd", "Opóźnienie musi być dodatnie!")
-                return
-
-            actual_sampling = float(probe_sig.sampling)
-            probe_data = probe_sig.signal.astype(float)
-            delay_samples = int(round(delay_seconds * actual_sampling))
-            reflected_data = np.zeros_like(probe_data)
-
-            if delay_samples < len(probe_data):
-                reflected_data[delay_samples:] = probe_data[:len(probe_data) - delay_samples]
-            else:
-                messagebox.showwarning("Ostrzeżenie",
-                    f"Opóźnienie ({delay_seconds:.4f} s) jest większe niż czas trwania sygnału!\n"
-                    "Wynik może być niejednoznaczny.")
-                reflected_data = np.concatenate(
-                    [np.zeros(delay_samples), probe_data])[:len(probe_data)]
-
-            reflected_label = (f"WYGENEROWANY z opóźnieniem {delay_seconds:.4f} s "
-                               f"({delay_samples} próbek)")
-            echo_mode = True
-
-        else:
-            reflected_sig = list_of_signals[reflected_idx]
-            reflected_sig._ensure_signal()
-
-            probe_t1 = sg.signal_start_time(probe_sig)
-            refl_t1 = sg.signal_start_time(reflected_sig)
-
-            try:
-                probe_data, reflected_data, actual_sampling, t1_diff, t1_delay_samples = (
-                    sg.place_reflected_on_probe_timeline(probe_sig, reflected_sig)
-                )
-            except ValueError as e:
-                if str(e) == "SAME_SAMPLING":
-                    messagebox.showerror(
-                        "Błąd",
-                        "Sygnały muszą mieć takie samo próbkowanie "
-                        "(tę samą częstotliwość próbkowania)."
-                    )
-                else:
-                    messagebox.showerror("Błąd", str(e))
-                return
-
-            if t1_diff < 0:
-                messagebox.showwarning(
-                    "Uwaga",
-                    f"Sygnał zwrotny zaczyna się wcześniej niż sondujący (Δt1 = {t1_diff:.4f} s).\n"
-                    "Przyjęto przesunięcie t1 = 0 próbek."
-                )
-                t1_diff = 0.0
-                t1_delay_samples = 0
-
-            echo_mode = True
-            radar_search_window = None
-            t1_delay_time = 0.0
-
-            reflected_label = (
-                f"{list_of_signals[reflected_idx].info_text or 'Sygnał zwrotny'}\n"
-                f"  (t1_sonda={probe_t1:.4g} s, t1_zwrotny={refl_t1:.4g} s, "
-                f"Δt1={max(0.0, t1_diff):.4g} s → {t1_delay_samples} próbek na osi sondy)"
-            )
-
-        detected_delay_time, detected_shift, corr, peak_idx, zero_lag = (
-            radar_delay_measurement(
-                probe_data,
-                reflected_data,
-                actual_sampling,
-                method='auto',
-                search_window=radar_search_window,
-                echo_mode=echo_mode,
-            )
-        )
-
-        corr_delay_time = detected_delay_time
-        corr_lag_samples = detected_shift
-        corr_delay_samples = abs(detected_shift)
-
-        total_delay_time = corr_delay_time
-        if total_delay_time <= 0:
+        report_times = np.arange(report_count, dtype=float) * report_period
+        real_distances = initial_distance + object_speed * report_times
+        if np.any(real_distances < 0):
             messagebox.showerror(
                 "Błąd",
-                "Nie można wyznaczyć prędkości dla zerowego opóźnienia korelacji."
+                "Dla podanych parametrów obiekt znalazłby się za czujnikiem "
+                "(ujemna odległość)."
             )
             return
 
-        measured_speed = (2 * known_distance) / total_delay_time
+        max_delay_time = 2 * float(np.max(real_distances)) / wave_speed
+        signal_duration = max_delay_time * 4 + 10.0
+        sample_count = int(np.ceil(signal_duration * sampling_rate))
+        if sample_count > 1_000_000:
+            messagebox.showerror(
+                "Błąd",
+                "Symulacja wymaga ponad 1 000 000 próbek. Zmniejsz próbkowanie, "
+                "odległość albo liczbę raportów."
+            )
+            return
 
-        show_correlation_analysis(
-            probe_data,
-            reflected_data,
-            corr,
-            title="Korelacja sygnałów radarowych (Sensor radarowy)",
-            search_window=radar_search_window,
-            peak_idx=peak_idx,
-            zero_lag=zero_lag,
-        )
+        probe_data = create_composite_radar_probe(signal_duration, sampling_rate)
+        results = []
+        last_reflected = None
+        last_corr = None
+        last_peak_idx = None
+        last_zero_lag = None
 
-        t1_info = ""
-        if not use_delay and t1_delay_samples > 0:
-            t1_info = (
-                f"Przesunięcie z t1 na osi sondy: {max(0.0, t1_diff):.6f} s "
-                f"({t1_delay_samples} próbek) — uwzględnione w korelacji.\n\n"
+        for time_value, real_distance in zip(report_times, real_distances):
+            real_delay_time = 2 * real_distance / wave_speed
+            real_delay_samples = int(round(real_delay_time * sampling_rate))
+            reflected_data = create_delayed_echo(probe_data, real_delay_samples)
+
+            detected_delay_time, detected_shift, corr, peak_idx, zero_lag = (
+                radar_delay_measurement(
+                    probe_data,
+                    reflected_data,
+                    sampling_rate,
+                    method='auto',
+                    search_window=None,
+                    echo_mode=True,
+                )
             )
 
-        result_text = (
-            f"Wyniki pomiaru SENSORA RADAROWEGO:\n\n"
-            f"Sygnał sondujący: {list_of_signals[probe_idx].info_text}\n"
-            f"Sygnał zwrotny:   {reflected_label}\n\n"
-            f"{t1_info}"
-            f"Maksimum funkcji korelacji:\n"
-            f"  indeks maksimum: {peak_idx}, indeks lag 0: {zero_lag}\n"
-            f"  lag maksimum: {corr_lag_samples:+d} próbek\n"
-            f"  opóźnienie do obliczenia prędkości: {corr_delay_time:.6f} s "
-            f"({corr_delay_samples} próbek)\n\n"
-            f"Podana odległość: {known_distance:.4f} km ({known_distance * 1000:.2f} m)\n"
-            f"Wyznaczona prędkość: {measured_speed:.4f} km/s\n"
-            f"  (2 × d / τ_korelacji)\n\n"
-            f"Parametry:\n"
-            f"  Częstość próbkowania: {actual_sampling:.0f} Hz\n"
-            f"  Odległość wejściowa:  {known_distance} km\n"
-            f"  Długość sygnału:      {len(probe_data)} próbek\n"
-            f"  Długość korelacji:    {len(corr)} próbek"
+            measured_distance = wave_speed * detected_delay_time / 2
+            results.append({
+                "time": float(time_value),
+                "real_distance": float(real_distance),
+                "real_delay": float(real_delay_time),
+                "real_delay_samples": int(real_delay_samples),
+                "measured_delay": float(detected_delay_time),
+                "measured_delay_samples": int(abs(detected_shift)),
+                "lag": int(detected_shift),
+                "measured_distance": float(measured_distance),
+                "error": float(measured_distance - real_distance),
+            })
+
+            last_reflected = reflected_data
+            last_corr = corr
+            last_peak_idx = peak_idx
+            last_zero_lag = zero_lag
+
+        rows_text = "\n".join(
+            "t={time:6.3f}s | d_rzecz={real_distance:9.3f} m | "
+            "dt={measured_delay:8.5f}s | d_pom={measured_distance:9.3f} m | "
+            "blad={error:+8.3f} m".format(**row)
+            for row in results
         )
 
-        messagebox.showinfo("Wynik pomiaru SENSORA RADAROWEGO", result_text)
+        result_text = (
+            "Symulacja sensora radarowego:\n\n"
+            "Sygnał sondujący: ciągły okresowy, złożony z dwóch sinusoid "
+            "T1=0.73 s oraz T2=1.11 s.\n"
+            f"Prędkość fali: {wave_speed:.6g} m/s\n"
+            f"Prędkość obiektu: {object_speed:.6g} m/s\n"
+            f"Okres raportowania: {report_period:.6g} s\n"
+            f"Częstość próbkowania: {sampling_rate:.6g} Hz\n\n"
+            "Porównanie raportów:\n"
+            f"{rows_text}\n\n"
+            "Odległość zmierzona jest liczona ze wzoru d = V * Δt / 2."
+        )
+
+        show_radar_tracking_plot(results)
+        show_correlation_analysis(
+            probe_data,
+            last_reflected,
+            last_corr,
+            title="Korelacja radarowa dla ostatniego raportu",
+            search_window=None,
+            peak_idx=last_peak_idx,
+            zero_lag=last_zero_lag,
+        )
+        messagebox.showinfo("Wynik symulacji sensora radarowego", result_text)
 
     except ValueError as e:
         messagebox.showerror("Błąd", f"Błędna wartość: {str(e)}")
     except Exception as e:
-        messagebox.showerror("Błąd", f"Błąd podczas pomiaru: {str(e)}")
+        messagebox.showerror("Błąd", f"Błąd podczas symulacji radaru: {str(e)}")
 
 
 def update_field_visibility():
@@ -714,7 +716,7 @@ def update_signals_display():
     signal_list = [f"{i+1}. {s.info_text or type(s).__str__}" for i, s in enumerate(list_of_signals)]
     combos = [
         'filter_signal_combo', 'corr_signal1_combo', 'corr_signal2_combo',
-        'radar_probe_combo', 'radar_reflected_combo', 'splot_signal1_combo', 'splot_signal2_combo',
+        'splot_signal1_combo', 'splot_signal2_combo',
         'operation_signal1_combo', 'operation_signal2_combo', 'transform_signal_combo'
     ]
     for name in combos:
@@ -829,7 +831,8 @@ def run():
     global signal_kw_entry, signal_ts_entry, signal_ns_entry, signal_n1_entry, signal_p_entry
     global signal_sampling_entry, signals_frame, filter_signal_combo, filter_type_var, filter_window_var
     global filter_order_entry, filter_cutoff_entry, corr_signal1_combo, corr_signal2_combo, corr_method_var
-    global radar_probe_combo, radar_reflected_combo, radar_sampling_entry, radar_distance_entry, radar_delay_entry
+    global radar_wave_speed_entry, radar_initial_distance_entry, radar_object_speed_entry
+    global radar_report_period_entry, radar_report_count_entry, radar_sampling_entry
     global splot_signal1_combo, splot_signal2_combo, transform_signal_combo, signal_A_label, signal_T_label, signal_t1_label
     global signal_d_label, signal_kw_label, signal_ts_label, signal_ns_label, signal_n1_label, signal_p_label
     global operation_signal1_combo, operation_signal2_combo
@@ -1044,7 +1047,7 @@ def run():
     tk.Label(tab_corr, text="Metoda:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
     corr_method_var = tk.StringVar(value='direct')
     method_combo = ttk.Combobox(tab_corr, textvariable=corr_method_var,
-                                 values=['direct', 'convolution'], state='readonly')
+                                 values=['direct', 'convolution', 'fft', 'auto'], state='readonly')
     method_combo.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=5)
     tk.Button(tab_corr, text="Oblicz korelację", command=compute_correlation,
              bg='lightyellow', height=2).grid(row=3, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
@@ -1055,33 +1058,44 @@ def run():
     radar_params_frame = tk.Frame(tab_radar)
     radar_params_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-    tk.Label(radar_params_frame, text="Sygnał sondujący (probe):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_probe_combo = ttk.Combobox(radar_params_frame, state='readonly', width=40)
-    radar_probe_combo.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
-
-    tk.Label(radar_params_frame, text="Sygnał zwrotny (reflected):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_reflected_combo = ttk.Combobox(radar_params_frame, state='readonly', width=40)
-    radar_reflected_combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
     tk.Label(radar_params_frame,
-             text="Dwa sygnały: zwrotny jest przesuwany o Δt1=(t1_zwrotny−t1_sonda) na osi sondy, "
-                  "jak echo przy jednym sygnale. Korelacja daje τ, a dla podanej odległości d liczymy v=2d/τ.",
-             fg='gray', font=('Arial', 8)).grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=0)
+             text="Symulacja generuje złożony sygnał sondujący z dwóch sinusoid, tworzy echo dla "
+                  "poruszającego się obiektu, wyznacza Δt z korelacji i liczy d = V·Δt/2.",
+             fg='gray', font=('Arial', 8), wraplength=760, justify=tk.LEFT).grid(
+                 row=0, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
 
-    tk.Label(radar_params_frame, text="Odległość [km]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_distance_entry = tk.Entry(radar_params_frame, width=15)
-    radar_distance_entry.insert(0, "7500")
-    radar_distance_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
+    tk.Label(radar_params_frame, text="Prędkość fali V [m/s]:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_wave_speed_entry = tk.Entry(radar_params_frame, width=15)
+    radar_wave_speed_entry.insert(0, "100")
+    radar_wave_speed_entry.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
 
-    tk.Label(radar_params_frame, text="Opóźnienie [s] (jeśli brak sygnału zwrotnego):").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-    radar_delay_entry = tk.Entry(radar_params_frame, width=15)
-    radar_delay_entry.insert(0, "0.05")
-    radar_delay_entry.grid(row=4, column=1, sticky=tk.EW, padx=5, pady=5)
+    tk.Label(radar_params_frame, text="Początkowa odległość [m]:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_initial_distance_entry = tk.Entry(radar_params_frame, width=15)
+    radar_initial_distance_entry.insert(0, "500")
+    radar_initial_distance_entry.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=5)
 
-    radar_sampling_entry = tk.Entry(radar_params_frame, width=1)
-    radar_sampling_entry.insert(0, "1000")
+    tk.Label(radar_params_frame, text="Prędkość obiektu [m/s]:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_object_speed_entry = tk.Entry(radar_params_frame, width=15)
+    radar_object_speed_entry.insert(0, "10")
+    radar_object_speed_entry.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=5)
 
-    tk.Button(radar_params_frame, text="Wyznacz prędkość SENSOREM RADAROWYM", command=simulate_radar,
-             bg='lightcoral', height=2, font=('Arial', 10, 'bold')).grid(row=5, column=0, columnspan=2,
+    tk.Label(radar_params_frame, text="Okres raportowania [s]:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_report_period_entry = tk.Entry(radar_params_frame, width=15)
+    radar_report_period_entry.insert(0, "1")
+    radar_report_period_entry.grid(row=4, column=1, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Label(radar_params_frame, text="Liczba raportów:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_report_count_entry = tk.Entry(radar_params_frame, width=15)
+    radar_report_count_entry.insert(0, "5")
+    radar_report_count_entry.grid(row=5, column=1, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Label(radar_params_frame, text="Częstość próbkowania [Hz]:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+    radar_sampling_entry = tk.Entry(radar_params_frame, width=15)
+    radar_sampling_entry.insert(0, "100")
+    radar_sampling_entry.grid(row=6, column=1, sticky=tk.EW, padx=5, pady=5)
+
+    tk.Button(radar_params_frame, text="Symuluj sensor radarowy", command=simulate_radar,
+             bg='lightcoral', height=2, font=('Arial', 10, 'bold')).grid(row=7, column=0, columnspan=2,
              sticky=tk.EW, padx=5, pady=10)
 
     root.mainloop()
